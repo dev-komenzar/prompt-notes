@@ -34,7 +34,7 @@ propagation:
 conventions: []
 wave_config:
   '1':
-  - node_id: test:acceptance-criteria
+  - node_id: test:acceptance_criteria
     output: docs/test/acceptance_criteria.md
     title: Acceptance Criteria
     depends_on:
@@ -59,7 +59,7 @@ wave_config:
     - grid
     - storage
     - settings
-  - node_id: governance:adr-tech-stack
+  - node_id: governance:adr_tech_stack
     output: docs/governance/adr_tech_stack.md
     title: 'ADR: Technology Stack Decisions'
     depends_on:
@@ -85,10 +85,10 @@ wave_config:
     output: docs/design/system_design.md
     title: System Design
     depends_on:
-    - id: test:acceptance-criteria
+    - id: test:acceptance_criteria
       relation: constrained_by
       semantic: governance
-    - id: governance:adr-tech-stack
+    - id: governance:adr_tech_stack
       relation: constrained_by
       semantic: governance
     conventions:
@@ -110,7 +110,7 @@ wave_config:
     - settings
     - shell
   '3':
-  - node_id: detailed_design:component-architecture
+  - node_id: detail:component_architecture
     output: docs/detailed_design/component_architecture.md
     title: Component Architecture & IPC Boundary
     depends_on:
@@ -132,11 +132,11 @@ wave_config:
     - storage
     - settings
     - shell
-  - node_id: detailed_design:editor-clipboard
+  - node_id: detail:editor_clipboard
     output: docs/detailed_design/editor_clipboard_design.md
     title: Editor & Clipboard Detailed Design
     depends_on:
-    - id: detailed_design:component-architecture
+    - id: detail:component_architecture
       relation: depends_on
       semantic: technical
     conventions:
@@ -154,11 +154,11 @@ wave_config:
       reason: Cmd+N / Ctrl+N で即座に新規ノート作成しフォーカス移動必須。
     modules:
     - editor
-  - node_id: detailed_design:storage-fileformat
+  - node_id: detail:storage_fileformat
     output: docs/detailed_design/storage_fileformat_design.md
     title: Storage & File Format Detailed Design
     depends_on:
-    - id: detailed_design:component-architecture
+    - id: detail:component_architecture
       relation: depends_on
       semantic: technical
     conventions:
@@ -179,14 +179,14 @@ wave_config:
     modules:
     - storage
     - settings
-  - node_id: detailed_design:grid-search
+  - node_id: detail:grid_search
     output: docs/detailed_design/grid_search_design.md
     title: Grid View & Search Detailed Design
     depends_on:
-    - id: detailed_design:component-architecture
+    - id: detail:component_architecture
       relation: depends_on
       semantic: technical
-    - id: detailed_design:storage-fileformat
+    - id: detail:storage_fileformat
       relation: depends_on
       semantic: technical
     conventions:
@@ -204,20 +204,20 @@ wave_config:
     - grid
     - storage
   '4':
-  - node_id: plan:implementation-plan
+  - node_id: plan:implementation_plan
     output: docs/plan/implementation_plan.md
     title: Implementation Plan
     depends_on:
-    - id: detailed_design:component-architecture
+    - id: detail:component_architecture
       relation: depends_on
       semantic: technical
-    - id: detailed_design:editor-clipboard
+    - id: detail:editor_clipboard
       relation: depends_on
       semantic: technical
-    - id: detailed_design:storage-fileformat
+    - id: detail:storage_fileformat
       relation: depends_on
       semantic: technical
-    - id: detailed_design:grid-search
+    - id: detail:grid_search
       relation: depends_on
       semantic: technical
     conventions:
