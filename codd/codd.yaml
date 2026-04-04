@@ -1,0 +1,239 @@
+version: 0.1.0
+project:
+  frameworks: []
+  name: promptnotes
+  language: typescript
+ai_command: claude --print --model claude-opus-4-6 --tools "" --system-prompt "Output
+  ONLY the requested content. Never wrap output in Markdown fences. Never add summaries,
+  headings, or explanatory prose before or after the output."
+coding_principles: null
+scan:
+  source_dirs:
+  - src/
+  test_dirs:
+  - tests/
+  doc_dirs:
+  - docs/
+  config_files: []
+  exclude:
+  - '**/node_modules/**'
+  - '**/__pycache__/**'
+  - '**/dist/**'
+graph:
+  store: jsonl
+  path: codd/scan
+bands:
+  green:
+    min_confidence: 0.9
+    min_evidence_count: 2
+  amber:
+    min_confidence: 0.5
+propagation:
+  max_depth: 10
+  stop_at_contract_boundary: true
+conventions: []
+wave_config:
+  '1':
+  - node_id: test:acceptance-criteria
+    output: docs/test/acceptance_criteria.md
+    title: Acceptance Criteria
+    depends_on:
+    - id: req:promptnotes-requirements
+      relation: derives_from
+      semantic: governance
+    conventions:
+    - targets:
+      - module:editor
+      reason: Cmd+N / Ctrl+N 即時新規ノート作成および1クリックコピーボタンはコアUXであり、未実装ならリリース不可。
+    - targets:
+      - module:editor
+      reason: CodeMirror 6 必須。タイトル入力欄禁止・Markdownプレビュー（レンダリング）禁止はスコープ外として明示されており、実装した場合リリース不可。
+    - targets:
+      - module:storage
+      reason: ファイル名規則 YYYY-MM-DDTHHMMSS.md および自動保存は確定済み。違反時リリース不可。
+    - targets:
+      - module:grid
+      reason: デフォルト直近7日間フィルタ・タグ/日付フィルタ・全文検索は必須機能。未実装ならリリース不可。
+    modules:
+    - editor
+    - grid
+    - storage
+    - settings
+  - node_id: governance:adr-tech-stack
+    output: docs/governance/adr_tech_stack.md
+    title: 'ADR: Technology Stack Decisions'
+    depends_on:
+    - id: req:promptnotes-requirements
+      relation: derives_from
+      semantic: governance
+    conventions:
+    - targets:
+      - framework:tauri
+      reason: Tauri（Rust + WebView）は確定済みフレームワーク。Electron等への変更はリリース不可。
+    - targets:
+      - module:editor
+      reason: CodeMirror 6 は確定済みエディタエンジン。Monaco等への変更はリリース不可。
+    - targets:
+      - module:storage
+      reason: ローカル .md ファイル保存は確定済み。DB・クラウド保存は禁止。
+    modules:
+    - editor
+    - storage
+    - shell
+  '2':
+  - node_id: design:system-design
+    output: docs/design/system_design.md
+    title: System Design
+    depends_on:
+    - id: test:acceptance-criteria
+      relation: constrained_by
+      semantic: governance
+    - id: governance:adr-tech-stack
+      relation: constrained_by
+      semantic: governance
+    conventions:
+    - targets:
+      - framework:tauri
+      - module:shell
+      reason: Tauri（Rust + WebView）アーキテクチャ必須。フロントエンド↔Rustバックエンド間はTauri IPC経由。
+    - targets:
+      - module:storage
+      reason: データはローカル .md ファイルのみ。クラウド同期・DB利用は禁止。AI呼び出し機能の実装も禁止。
+    - targets:
+      - platform:linux
+      - platform:macos
+      reason: Linux・macOS対応必須。Windowsは将来対応としスコープ外。
+    modules:
+    - editor
+    - grid
+    - storage
+    - settings
+    - shell
+  '3':
+  - node_id: detailed_design:component-architecture
+    output: docs/detailed_design/component_architecture.md
+    title: Component Architecture & IPC Boundary
+    depends_on:
+    - id: design:system-design
+      relation: depends_on
+      semantic: technical
+    conventions:
+    - targets:
+      - module:shell
+      - framework:tauri
+      reason: Tauri IPC境界を明確化し、フロントエンドからの直接ファイルシステムアクセスを禁止。全ファイル操作はRustバックエンド経由。
+    - targets:
+      - module:storage
+      - module:settings
+      reason: 設定変更（保存ディレクトリ）はRustバックエンド経由で永続化。フロントエンド単独でのファイルパス操作は禁止。
+    modules:
+    - editor
+    - grid
+    - storage
+    - settings
+    - shell
+  - node_id: detailed_design:editor-clipboard
+    output: docs/detailed_design/editor_clipboard_design.md
+    title: Editor & Clipboard Detailed Design
+    depends_on:
+    - id: detailed_design:component-architecture
+      relation: depends_on
+      semantic: technical
+    conventions:
+    - targets:
+      - module:editor
+      reason: CodeMirror 6 必須。Markdownシンタックスハイライトのみ（レンダリング禁止）。frontmatter領域は背景色で視覚的に区別必須。
+    - targets:
+      - module:editor
+      reason: タイトル入力欄は禁止。本文のみのエディタ画面であること。
+    - targets:
+      - module:editor
+      reason: 1クリックコピーボタンによる本文全体のクリップボードコピーはアプリの核心UX。未実装ならリリース不可。
+    - targets:
+      - module:editor
+      reason: Cmd+N / Ctrl+N で即座に新規ノート作成しフォーカス移動必須。
+    modules:
+    - editor
+  - node_id: detailed_design:storage-fileformat
+    output: docs/detailed_design/storage_fileformat_design.md
+    title: Storage & File Format Detailed Design
+    depends_on:
+    - id: detailed_design:component-architecture
+      relation: depends_on
+      semantic: technical
+    conventions:
+    - targets:
+      - module:storage
+      reason: ファイル名は YYYY-MM-DDTHHMMSS.md 形式で確定。作成時タイムスタンプで不変。
+    - targets:
+      - module:storage
+      reason: frontmatter は YAML形式、メタデータは tags のみ。作成日はファイル名から取得。追加フィールドの導入は要件変更が必要。
+    - targets:
+      - module:storage
+      reason: 自動保存必須。ユーザーによる明示的保存操作は不要。
+    - targets:
+      - module:storage
+      - module:settings
+      reason: 'デフォルト保存ディレクトリは Linux: ~/.local/share/promptnotes/notes/、macOS: ~/Library/Application
+        Support/promptnotes/notes/。設定から任意ディレクトリに変更可能であること。'
+    modules:
+    - storage
+    - settings
+  - node_id: detailed_design:grid-search
+    output: docs/detailed_design/grid_search_design.md
+    title: Grid View & Search Detailed Design
+    depends_on:
+    - id: detailed_design:component-architecture
+      relation: depends_on
+      semantic: technical
+    - id: detailed_design:storage-fileformat
+      relation: depends_on
+      semantic: technical
+    conventions:
+    - targets:
+      - module:grid
+      reason: Pinterestスタイル可変高カード必須。デフォルトフィルタは直近7日間。
+    - targets:
+      - module:grid
+      reason: タグ・日付フィルタおよび全文検索（ファイル全走査）は必須機能。
+    - targets:
+      - module:grid
+      - module:editor
+      reason: カードクリックでエディタ画面へ遷移必須。
+    modules:
+    - grid
+    - storage
+  '4':
+  - node_id: plan:implementation-plan
+    output: docs/plan/implementation_plan.md
+    title: Implementation Plan
+    depends_on:
+    - id: detailed_design:component-architecture
+      relation: depends_on
+      semantic: technical
+    - id: detailed_design:editor-clipboard
+      relation: depends_on
+      semantic: technical
+    - id: detailed_design:storage-fileformat
+      relation: depends_on
+      semantic: technical
+    - id: detailed_design:grid-search
+      relation: depends_on
+      semantic: technical
+    conventions:
+    - targets:
+      - platform:linux
+      - platform:macos
+      reason: Linux（バイナリ・Flatpak・NixOS）および macOS（バイナリ・Homebrew Cask）配布必須。Windowsは対象外。
+    - targets:
+      - module:editor
+      - module:grid
+      - module:storage
+      - module:settings
+      reason: 全必須機能の実装・テスト完了までリリース不可。AI呼び出し・クラウド同期・Markdownプレビュー・モバイル対応はスコープ外であり実装禁止。
+    modules:
+    - editor
+    - grid
+    - storage
+    - settings
+    - shell
