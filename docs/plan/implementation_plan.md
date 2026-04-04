@@ -39,389 +39,280 @@ codd:
 
 ## 1. Overview
 
-本実装計画は、PromptNotes（Tauri ベースのローカルファーストプロンプトノートアプリケーション）の開発を、依存設計書群（Component Architecture & IPC Boundary、Editor & Clipboard Detailed Design、Storage & File Format Detailed Design、Grid View & Search Detailed Design）に基づき、具体的なマイルストーンとリスク管理に落とし込むものである。
+本実装計画は PromptNotes アプリケーション（Tauri ベースのローカルファーストプロンプトノートアプリ）の全モジュールを対象とした開発計画を定義する。PromptNotes は Rust バックエンド + Svelte フロントエンド（WebView）で構成され、CodeMirror 6 による Markdown プレーンテキスト編集、1クリックコピーボタン、Pinterest スタイル Masonry グリッドビュー、タグ/日付フィルタ、全文検索を提供する。データは `.md` ファイルのみにローカル保存し、データベース・クラウド同期・AI 呼び出しは一切使用しない。
 
-### 1.1 対象スコープ
+### 対象プラットフォーム
 
-PromptNotes は Tauri（Rust バックエンド + WebView フロントエンド）アーキテクチャ上に構築され、以下の5モジュールで構成される。
+| プラットフォーム | WebView | デフォルト保存ディレクトリ | 配布形式 |
+|----------------|---------|------------------------|---------|
+| Linux | GTK WebKitGTK | `~/.local/share/promptnotes/notes/` | `.AppImage`, `.deb`, Flatpak (Flathub), NixOS パッケージ |
+| macOS | WKWebView | `~/Library/Application Support/promptnotes/notes/` | `.dmg`, Homebrew Cask |
 
-| モジュール | 所有者 | 主要責務 |
-|-----------|--------|---------|
-| `module:shell` | Rust バックエンド | Tauri IPC コマンドルーティング、CSP/allowlist 管理、プラットフォーム固有パス解決 |
-| `module:editor` | フロントエンド WebView SPA | CodeMirror 6 エディタ、1クリックコピーボタン、自動保存デバウンス、`Cmd+N`/`Ctrl+N` キーバインド |
-| `module:grid` | フロントエンド（UI）+ Rust バックエンド（データ） | Pinterest スタイル可変高カードレイアウト、タグ/日付フィルタ、全文検索、カードクリック遷移 |
-| `module:storage` | Rust バックエンド | ファイル I/O（`std::fs`）、ファイル名生成（`chrono`）、frontmatter パース（`serde_yaml`）、プレビュー生成 |
-| `module:settings` | フロントエンド（UI）+ Rust バックエンド（永続化） | 保存ディレクトリ変更 UI、`config.json` 読み書き（`serde_json`）、パスバリデーション |
+Windows はスコープ外であり、ビルド・配布ターゲットに含めない。モバイル（iOS / Android）も対象外である。これはリリース不可制約 `platform:linux` および `platform:macos` に準拠する。
 
-### 1.2 対象プラットフォーム
+### 対象モジュール構成
 
-| プラットフォーム | WebView エンジン | 配布形式 |
-|-----------------|-----------------|---------|
-| Linux | GTK WebView（WebKitGTK） | `.AppImage` / `.deb`、Flatpak（Flathub）、Nix パッケージ |
-| macOS | WKWebView | `.dmg`、Homebrew Cask |
+リリース不可制約 `module:editor`, `module:grid`, `module:storage`, `module:settings` に基づき、以下の5モジュール全ての実装・テスト完了をリリース条件とする。AI 呼び出し・クラウド同期・Markdown プレビュー・モバイル対応はスコープ外であり実装禁止である。
 
-**Windows は対象外であり、ビルド・配布パイプラインを構築しない。** この制約は CI/CD 構成、テストマトリクス、依存クレート選定の全工程に反映される。
+| モジュール | レイヤー | 主要責務 | 主要技術 |
+|-----------|---------|---------|---------|
+| `module:shell` | Rust + Tauri ランタイム | ウィンドウ管理、IPC コマンドルーティング、ライフサイクル管理 | Tauri `Builder`, `#[tauri::command]` |
+| `module:storage` | Rust バックエンド | `.md` ファイル CRUD、frontmatter パース、ファイル名タイムスタンプ生成、全文検索 | `std::fs`, `chrono`, `serde_yaml`, `regex` |
+| `module:settings` | Rust バックエンド + Svelte UI | `config.json` 読み書き、保存ディレクトリ変更 | `serde_json`, `dirs`, Tauri ファイルダイアログ API |
+| `module:editor` | Svelte フロントエンド | CodeMirror 6 Markdown 編集、frontmatter デコレーション、自動保存（500ms デバウンス）、1クリックコピーボタン、Cmd+N / Ctrl+N 新規ノート作成 | `@codemirror/view`, `@codemirror/state`, `@codemirror/lang-markdown`, `navigator.clipboard` |
+| `module:grid` | Svelte フロントエンド | Masonry カードレイアウト、直近7日間デフォルト表示、タグ/日付フィルタ、全文検索 | CSS Columns（または svelte-masonry）、`lib/api.ts` |
 
-### 1.3 リリース不可制約への準拠
+### アーキテクチャ原則
 
-本実装計画は以下のリリース不可制約をすべてのマイルストーンの完了条件に組み込む。各制約に違反する成果物が存在する場合、該当マイルストーンは完了とみなさない。
+すべての実装は以下のアーキテクチャ原則に準拠する。これらはリリース不可制約として扱う。
 
-**プラットフォーム制約（`platform:linux`, `platform:macos`）:**
+1. **Tauri IPC 境界の厳守（`framework:tauri`, `module:shell`）:** フロントエンド↔Rust バックエンド間の全通信は Tauri IPC（`invoke`）経由で行う。フロントエンドからの直接ファイルシステムアクセスは禁止する。全ファイル操作は Rust バックエンド経由で実行する。`@tauri-apps/api` の `invoke` 直接呼び出しは `src/lib/api.ts` 内にのみ限定し、Svelte コンポーネントから直接 `invoke` を呼び出さない。
+2. **設定永続化のバックエンド排他（`module:storage`, `module:settings`）:** 設定変更（保存ディレクトリ）は `set_config` IPC コマンドを通じて Rust バックエンドで永続化する。フロントエンド単独でのファイルパス操作・ファイルシステム読み書きは禁止する。ディレクトリ選択には Tauri のファイルダイアログ API を使用し、選択結果は Rust 側で検証・保存する。
+3. **型の正方向（Rust → TypeScript）:** `NoteEntry`, `Config` 等の共有型は Rust 側（`serde::Serialize` / `serde::Deserialize`）が正規定義であり、TypeScript 側（`src/lib/types.ts`）は Rust 側に追従する。CI の E2E テストで型の一致を検証する。
 
-Linux（バイナリ・Flatpak・NixOS）および macOS（バイナリ・Homebrew Cask）での配布を必須とする。全マイルストーンの受け入れテストは Linux・macOS 双方で実行する。Windows 向けビルド・テスト・配布パイプラインは構築禁止とする。
+### IPC コマンド一覧
 
-**モジュール制約（`module:editor`, `module:grid`, `module:storage`, `module:settings`）:**
+全マイルストーンを通じて実装する IPC コマンドの完全なリストを以下に示す。
 
-4つの必須モジュールの実装・テスト完了がリリースの前提条件である。以下の機能はスコープ外であり実装禁止とする。
+| コマンド名 | 所有モジュール | 引数 | 戻り値 | フロントエンド呼び出し元 |
+|-----------|--------------|------|--------|----------------------|
+| `create_note` | `module:storage` | なし | `{ filename: string, path: string }` | `module:editor` |
+| `save_note` | `module:storage` | `{ filename: string, content: string }` | `void` | `module:editor` |
+| `read_note` | `module:storage` | `{ filename: string }` | `{ content: string }` | `module:editor` |
+| `delete_note` | `module:storage` | `{ filename: string }` | `void` | `module:editor`, `module:grid` |
+| `list_notes` | `module:storage` | `{ from_date?: string, to_date?: string, tag?: string }` | `NoteEntry[]` | `module:grid` |
+| `search_notes` | `module:storage` | `{ query: string, from_date?: string, to_date?: string, tag?: string }` | `NoteEntry[]` | `module:grid` |
+| `get_config` | `module:settings` | なし | `Config` | `module:settings` UI |
+| `set_config` | `module:settings` | `{ notes_dir: string }` | `void` | `module:settings` UI |
 
-| 実装禁止機能 | CI 検出方法 |
-|-------------|-----------|
-| AI 呼び出し（LLM API） | `tauri.conf.json` の `http` allowlist が `false` であること。CSP `connect-src` 制限。`fetch`/`XMLHttpRequest` 使用の lint 検出。 |
-| クラウド同期 | `Cargo.toml` に `reqwest`、`hyper` 等ネットワーク系クレートが存在しないこと。 |
-| Markdown プレビュー（HTML レンダリング） | `package.json` に `marked`、`markdown-it`、`remark-html` 等が存在しないこと。受け入れテスト FAIL-05。 |
-| モバイル対応 | Tauri モバイルビルド設定が存在しないこと。 |
-| データベース | `Cargo.toml` に `rusqlite`、`diesel`、`sea-orm`、`sqlx` 等が存在しないこと。IndexedDB API 使用の lint 検出。 |
+### フロントエンドファイル構成
 
-**Tauri IPC 境界制約（`module:shell`, `framework:tauri`）:**
+フロントエンドは Svelte で確定しており、以下のディレクトリ構造で実装する。
 
-Tauri IPC 境界を明確化し、フロントエンドからの直接ファイルシステムアクセスを禁止する。全ファイル操作は Rust バックエンド経由とする。この制約は3層で担保する。
+```
+src/
+├── App.svelte              # ルートコンポーネント。currentView 状態で画面切替（'grid' | 'editor' | 'settings'）
+├── lib/
+│   ├── api.ts              # invoke ラッパー。全 IPC コマンドの型安全な呼び出し関数
+│   ├── types.ts            # NoteEntry, Config 等の TypeScript 型定義（Rust 側に追従）
+│   └── debounce.ts         # デバウンスユーティリティ（自動保存 500ms、検索 300ms）
+├── components/
+│   ├── Editor.svelte       # module:editor — CodeMirror 6 統合
+│   ├── CopyButton.svelte   # 1クリックコピーボタン（Editor.svelte 専用子コンポーネント）
+│   ├── GridView.svelte     # module:grid — Masonry カードレイアウト
+│   ├── NoteCard.svelte     # グリッドビュー用個別カードコンポーネント
+│   ├── TagFilter.svelte    # タグフィルタ UI
+│   ├── DateFilter.svelte   # 日付フィルタ UI
+│   └── Settings.svelte     # module:settings UI — ディレクトリ選択
+```
 
-1. **`tauri.conf.json` の `allowlist`:** `fs: { all: false }`, `path: { all: false }`, `shell: { all: false }`, `http: { all: false }`, `dialog: { all: false }` を設定。
-2. **CSP ヘッダ:** `connect-src` を `ipc:` スキームのみに制限。
-3. **カスタムコマンドのパスバリデーション:** `save_note`、`read_note`、`update_settings` 等でパストラバーサル（`../` 等）を検出・拒否。ファイル名形式 `YYYY-MM-DDTHHMMSS.md` の正規表現チェック。
+SPA ルーティングライブラリは使用せず、`App.svelte` の `currentView` 状態変数による条件レンダリングで3画面（エディタ・グリッド・設定）を切り替える。
 
-**設定永続化制約（`module:storage`, `module:settings`）:**
+### パフォーマンス閾値
 
-設定変更（保存ディレクトリ）は Rust バックエンド経由で永続化する。フロントエンド単独でのファイルパス操作は禁止する。フロントエンドは `update_settings` IPC コマンドでパス文字列を送信するのみであり、`config.json` のパス・フォーマット・ディレクトリ作成ロジックを知ることはない。
+全マイルストーンを通じて以下のパフォーマンス閾値を達成する。
 
-### 1.4 IPC コマンド一覧（確定・全8コマンド）
+| 操作 | 期待レイテンシ | 計測条件 |
+|------|-------------|---------|
+| `create_note` | 1ms 以下 | ファイル作成 + タイムスタンプ生成 |
+| `save_note` | 1ms 以下 | `std::fs::write` ローカル書き込み |
+| `read_note` | 1ms 以下 | `std::fs::read_to_string` ローカル読み込み |
+| `list_notes` | 100ms 以下 | 1,000 件走査 + frontmatter パース |
+| `search_notes` | 200ms 以下 | 1,000 件全文走査 |
+| 自動保存エンドツーエンド | 約 505ms | デバウンス 500ms + IPC + 書き込み |
+| Cmd+N → フォーカス完了 | 体感遅延なし | IPC オーバーヘッド含め 10ms 以内 |
+| カードクリック → エディタ表示 | 体感遅延なし | `currentView` 切替 + `read_note` + CM6 ロード |
 
-| コマンド | 引数 | 戻り値 | 呼び出し元モジュール |
-|---------|------|--------|-------------------|
-| `create_note` | なし | `{ filename: string, path: string }` | `module:editor` |
-| `save_note` | `{ filename: string, content: string }` | `{ success: bool }` | `module:editor` |
-| `read_note` | `{ filename: string }` | `{ content: string, tags: string[] }` | `module:editor` |
-| `list_notes` | `{ from_date: string, to_date: string, tag?: string }` | `{ notes: NoteEntry[] }` | `module:grid` |
-| `search_notes` | `{ query: string, from_date?: string, to_date?: string }` | `{ results: NoteEntry[] }` | `module:grid` |
-| `get_all_tags` | なし | `{ tags: string[] }` | `module:grid` |
-| `get_settings` | なし | `{ notes_dir: string }` | `module:settings` |
-| `update_settings` | `{ notes_dir: string }` | `{ success: bool }` | `module:settings` |
-
-### 1.5 未決定事項の実装計画への影響
-
-設計書群に記載されたオープンクエスチョンのうち、マイルストーン構成に直接影響するものを以下に示す。
-
-| OQ ID | 内容 | 影響マイルストーン | 暫定方針 |
-|-------|------|------------------|---------|
-| OQ-001 | フロントエンド UI フレームワーク選定（React vs Svelte） | M0（技術検証） | プロトタイプで比較評価し M0 完了時に確定 |
-| OQ-002 | 自動保存デバウンス間隔（500ms–2000ms） | M2（エディタ実装） | 暫定値 1000ms で実装し M4（統合テスト）で最終調整 |
-| GS-OQ-001 | Masonry レイアウト実装方式（CSS columns / CSS Grid masonry / JS ライブラリ） | M0（技術検証） | WebKitGTK・WKWebView での技術検証プロトタイプで確定 |
-| OQ-006 / Tauri v2 | Tauri v2 の IPC/セキュリティモデル変更への対応 | M0（技術検証） | Tauri v2 安定版のリリース状況を評価し、v1 または v2 を M0 完了時に確定 |
-| Storage OQ-001 | 同一秒内ファイル名衝突のフォールバック | M1（ストレージ実装） | 秒精度で十分と想定し、衝突時はエラー返却。連打テストで検証。 |
-| Storage OQ-003 | 外部ツール追加 frontmatter フィールド保持ポリシー | M1（ストレージ実装） | 互換性重視で raw YAML 部分更新を検討。技術検証で実装コスト比較。 |
-
----
+5,000 件超過時に応答時間を計測し、`tantivy` クレート（Rust 製全文検索エンジン）の導入を検討する。
 
 ## 2. Milestones
 
-### M0: 技術検証・プロジェクト基盤構築（2週間）
+### Milestone 1: プロジェクト基盤構築（1週目〜2週目）
 
-**目的:** フロントエンド UI フレームワーク、Masonry レイアウト方式、Tauri バージョンを確定し、プロジェクトスケルトンを構築する。
+Tauri + Svelte + Rust のプロジェクトスキャフォールディングと、全モジュールの基盤となる IPC 境界・型定義・ビルドパイプラインを確立する。
 
-**成果物:**
+| タスク ID | タスク | 対象モジュール | 成果物 | 完了条件 |
+|----------|-------|--------------|--------|---------|
+| M1-01 | Tauri プロジェクト初期化（Rust + Svelte） | `module:shell` | `src-tauri/` + `src/` ディレクトリ構造、`Cargo.toml`、`package.json` | `cargo tauri dev` で空ウィンドウが Linux / macOS で起動する |
+| M1-02 | Tauri バージョン選定（v1 / v2、OQ-005 解決） | `module:shell` | `Cargo.toml` の Tauri 依存バージョン確定 | 選定根拠を文書化し、`allowlist`（v1）または permissions（v2）の設定方式を確定 |
+| M1-03 | Tauri `allowlist` / permissions 設定で WebView からの直接ファイルシステムアクセスを遮断 | `module:shell` | `tauri.conf.json` の `fs` スコープ制限設定 | フロントエンドから `fetch('file://...')` でファイルアクセスを試みて失敗することを確認 |
+| M1-04 | Rust 依存クレート追加（`chrono`, `serde_yaml`, `serde_json`, `dirs`, `regex`） | `module:storage`, `module:settings` | `Cargo.toml` に依存追加 | `cargo build` 成功 |
+| M1-05 | Svelte フロントエンド初期化 | 全フロントエンドモジュール | `App.svelte`、`currentView` 状態変数による画面切替骨格 | 3画面（editor / grid / settings）の空コンポーネント間で遷移可能 |
+| M1-06 | `src/lib/types.ts` に `NoteEntry`, `Config` TypeScript 型定義 | 共有層 | `src/lib/types.ts` | Rust 側の `NoteEntry`（`models.rs`）、`Config`（`config.rs`）と構造一致 |
+| M1-07 | `src/lib/api.ts` に IPC ラッパー関数のスタブ実装 | 共有層 | `src/lib/api.ts`（`createNote`, `saveNote`, `readNote`, `deleteNote`, `listNotes`, `searchNotes`, `getConfig`, `setConfig`） | 全8関数の型注釈付きシグネチャが定義され、`invoke` 呼び出しが `api.ts` 内にのみ存在する |
+| M1-08 | `src/lib/debounce.ts` デバウンスユーティリティ実装 | 共有層 | `src/lib/debounce.ts` | `setTimeout` / `clearTimeout` ベースのデバウンス関数がユニットテスト通過 |
+| M1-09 | CI パイプライン構築（Linux + macOS ビルド・テスト） | 全モジュール | GitHub Actions（または同等）ワークフロー | `cargo test` + `npm test` が Linux / macOS ランナーで通過 |
+| M1-10 | Rust 側 `NoteEntry` 構造体（`models.rs`）と `Config` 構造体（`config.rs`）の正規定義 | `module:storage`, `module:settings` | `src-tauri/src/models.rs`, `src-tauri/src/config.rs` | `serde::Serialize` / `serde::Deserialize` 導出、フィールド: `filename`, `created_at`, `tags`, `body_preview`（NoteEntry）、`notes_dir`（Config） |
 
-| 成果物 | 詳細 |
-|--------|------|
-| Tauri プロジェクトスケルトン | `tauri.conf.json`（allowlist 全 false 設定済み）、CSP ヘッダ設定、Rust バックエンド空プロジェクト |
-| UI フレームワーク選定結果 | React vs Svelte の技術検証レポート。CodeMirror 6 統合安定性（React: `@uiw/react-codemirror` ラッパー品質、Svelte: 直接 DOM マウント）、frontmatter 背景色カスタムデコレーション実装容易性、ビルドサイズ比較、Tauri IPC 統合パターンの評価結果。 |
-| Masonry レイアウト方式選定結果 | CSS `columns` / CSS Grid `masonry` / JavaScript ライブラリ（`react-masonry-css` 等）の WebKitGTK・WKWebView 双方での動作検証結果 |
-| CI/CD パイプライン初期構成 | Linux・macOS デュアルプラットフォームビルド、排除機能検出チェック（`Cargo.toml` 依存検査、`package.json` 依存検査、`tauri.conf.json` allowlist 検査） |
-| `<input type="date">` の WebView 互換性検証 | WebKitGTK・WKWebView での日付ピッカー UI ネイティブサポート状況 |
+**Milestone 1 完了基準:** Tauri アプリが Linux / macOS でビルド・起動でき、Svelte の3画面切替が動作し、IPC 境界のスタブ関数が定義され、CI が通過する。
 
-**完了条件:**
+### Milestone 2: ストレージ層実装（3週目〜4週目）
 
-- OQ-001（UI フレームワーク選定）が確定している
-- GS-OQ-001（Masonry レイアウト方式）が確定している
-- `tauri.conf.json` の `allowlist` が全 `false` で設定され、CI でチェックされている
-- Linux・macOS 双方で `tauri dev` によるスケルトンアプリ起動が確認されている
-- 排除機能（AI、クラウド同期、DB、Markdown レンダリング）の CI 検出チェックが稼働している
+`module:storage` と `module:settings` の Rust バックエンド実装を完了する。全 IPC コマンドが動作し、ファイル操作・frontmatter パース・検索・設定管理が Rust 側で完結する。
 
----
+| タスク ID | タスク | 対象モジュール | 成果物 | 完了条件 |
+|----------|-------|--------------|--------|---------|
+| M2-01 | `create_note` IPC コマンド実装 | `module:storage` | `#[tauri::command] fn create_note()` | `chrono::Local::now()` でファイル名 `YYYY-MM-DDTHHMMSS.md` 生成、初期 frontmatter（`tags: []`）書き込み、`{ filename, path }` 返却。同一秒衝突時に `_1`, `_2` サフィックス付与 |
+| M2-02 | `save_note` IPC コマンド実装 | `module:storage` | `#[tauri::command] fn save_note()` | ファイル名バリデーション（正規表現 `^\d{4}-\d{2}-\d{2}T\d{6}(_\d+)?\.md$`）、パストラバーサル拒否（`..`, `/`, `\` 検出）、`std::fs::write` による全文上書き |
+| M2-03 | `read_note` IPC コマンド実装 | `module:storage` | `#[tauri::command] fn read_note()` | ファイル名バリデーション、`std::fs::read_to_string` でコンテンツ返却 |
+| M2-04 | `delete_note` IPC コマンド実装 | `module:storage` | `#[tauri::command] fn delete_note()` | ファイル名バリデーション、`std::fs::remove_file` による物理削除 |
+| M2-05 | frontmatter パーサー実装 | `module:storage` | frontmatter 抽出 + `serde_yaml` デシリアライズ関数 | `---` デリミタ検出、YAML パース、エッジケース対応（frontmatter なし→`tags: []`、パースエラー→`tags: []`、`tags` 非存在→`[]`、`tags` が文字列→単一要素配列変換、未知フィールド→無視） |
+| M2-06 | `list_notes` IPC コマンド実装 | `module:storage` | `#[tauri::command] fn list_notes()` | `std::fs::read_dir` でファイル列挙、ファイル名タイムスタンプパース、`from_date` / `to_date` / `tag` フィルタリング、frontmatter パース、`body_preview`（先頭 200 文字）切り出し、`created_at` 降順ソート |
+| M2-07 | `search_notes` IPC コマンド実装 | `module:storage` | `#[tauri::command] fn search_notes()` | `list_notes` のフィルタに加え `content.to_lowercase().contains(&query.to_lowercase())` による全文検索 |
+| M2-08 | デフォルト保存ディレクトリ初期化 | `module:storage` | 起動時の `std::fs::create_dir_all` 処理 | Linux: `~/.local/share/promptnotes/notes/`、macOS: `~/Library/Application Support/promptnotes/notes/` を `dirs::data_dir()` から算出し自動作成 |
+| M2-09 | `get_config` / `set_config` IPC コマンド実装 | `module:settings` | `#[tauri::command] fn get_config()`, `fn set_config()` | `config.json` の読み書き。`set_config` ではパス存在チェック・書き込み権限チェックを Rust 側で実行。検証失敗時はエラー返却 |
+| M2-10 | `module:shell` の IPC コマンド登録 | `module:shell` | `main.rs` の `tauri::Builder` 設定 | 全8コマンドを `generate_handler![]` で登録、ディスパッチ動作確認 |
+| M2-11 | ストレージ層ユニットテスト | `module:storage`, `module:settings` | Rust テストコード | 全 IPC コマンドの正常系・異常系テスト、frontmatter エッジケース全パターン、ファイル名バリデーション、パストラバーサル拒否テスト |
 
-### M1: Rust バックエンド — `module:storage` + `module:shell` コア実装（2週間）
+**Milestone 2 完了基準:** 全8 IPC コマンドが Rust 側で実装・テスト完了し、`cargo test` が Linux / macOS で通過する。フロントエンドからの `invoke` 呼び出しで期待通りのレスポンスが返却される。
 
-**目的:** ファイル I/O、IPC コマンドルーティング、設定管理の Rust バックエンドコアを実装する。
+### Milestone 3: エディタ画面実装（5週目〜6週目）
 
-**実装対象:**
+`module:editor` の Svelte + CodeMirror 6 統合を完了する。Markdown シンタックスハイライト、frontmatter 背景色デコレーション、自動保存、1クリックコピーボタン、Cmd+N / Ctrl+N 新規ノート作成のすべてを実装する。
 
-| コンポーネント | 実装内容 |
-|--------------|---------|
-| `module:shell` — Tauri Command Router | `#[tauri::command]` マクロによる全8 IPC コマンド登録。コマンド許可リスト管理。 |
-| `module:storage` — ファイル名生成 | `chrono::Local::now()` → `format!("{}", dt.format("%Y-%m-%dT%H%M%S"))` + `.md`。同一秒衝突検出（`path.exists()` チェック、衝突時エラー返却）。 |
-| `module:storage` — ファイル読み書き | `std::fs::write`（新規作成・上書き保存）、`std::fs::read_to_string`（読み取り）。パストラバーサル防止（`..`、`/`、`\` 検出）。ファイル名正規表現 `^\d{4}-\d{2}-\d{2}T\d{6}\.md$` チェック。 |
-| `module:storage` — frontmatter パーサー | `serde_yaml` による `Frontmatter { tags: Vec<String> }` デシリアライズ。`serde(default)` で `tags` 未指定時は空配列。寛容パース（`tags` 以外のフィールドは無視）。 |
-| `module:storage` — frontmatter テンプレート | 新規ノート用 `---\ntags: []\n---\n\n` テンプレート生成・書き込み。 |
-| `module:storage` — プレビュー生成 | 本文先頭から最大200文字（暫定値、OQ-004）を切り出し、改行を半角スペースに置換。 |
-| `module:storage` — 日付フィルタリング | ファイル名 `YYYY-MM-DDTHHMMSS.md` → `NaiveDate` パース → `from_date` ≤ 日付 ≤ `to_date` 判定。 |
-| `module:storage` — タグフィルタリング | frontmatter `tags` フィールドと指定タグの一致判定。日付フィルタとの AND 結合。 |
-| `module:storage` — 全文検索 | `std::fs::read_dir` → `std::fs::read_to_string` → `content.to_lowercase().contains(&query_lower)`（case-insensitive デフォルト）。 |
-| `module:storage` — タグ一覧集約 | 全 `.md` ファイルの frontmatter から `tags` を収集し、重複排除して返却。 |
-| Settings Manager — `config.json` 読み書き | `serde_json` + `std::fs` による `config.json`（`{ "notes_dir": "..." }`）の読み書き。`serde_json::to_string_pretty` で人間可読形式。 |
-| Settings Manager — ディレクトリ変更バリデーション | `Path::canonicalize`、`std::fs::create_dir_all`、書き込み権限テスト（テストファイル書き込み→削除）。 |
-| Settings Manager — デフォルトパス解決 | `dirs::data_dir()` + `promptnotes/notes/`（ノート）、`dirs::config_dir()` + `promptnotes/config.json`（設定）。 |
-| `NoteEntry` 型定義 | `#[derive(Serialize)] struct NoteEntry { filename, created_at, tags, preview }`。`created_at` はファイル名から導出。 |
+| タスク ID | タスク | 対象モジュール | 成果物 | 完了条件 |
+|----------|-------|--------------|--------|---------|
+| M3-01 | CodeMirror 6 依存パッケージ導入（`@codemirror/view`, `@codemirror/state`, `@codemirror/lang-markdown`） | `module:editor` | `package.json` 依存追加 | `npm install` 成功 |
+| M3-02 | `Editor.svelte` の CodeMirror 6 統合 | `module:editor` | `Editor.svelte` | `onMount` で `EditorView` 生成、`onDestroy` で `EditorView.destroy()`、`@codemirror/lang-markdown` による Markdown シンタックスハイライト表示。タイトル入力欄は配置しない（CONV-2 準拠）。Markdown プレビューパネルは配置しない |
+| M3-03 | frontmatter デコレーション技術検証（OQ-002 解決） | `module:editor` | 技術検証結果文書 + 実装方式確定 | `ViewPlugin` または `StateField` + `Decoration` のいずれかを選定。先頭 `---` 〜 終了 `---` の行範囲検出、`Decoration.line({ class: "cm-frontmatter-line" })` 適用、CSS 変数 `--frontmatter-bg` による背景色制御 |
+| M3-04 | frontmatter 背景色デコレーション実装 | `module:editor` | CM6 カスタムエクステンション | frontmatter 領域に `rgba(59, 130, 246, 0.08)` ベースの背景色が適用される。ドキュメント変更時に範囲再計算。frontmatter なし・入力中・完成・削除の全状態遷移に対応 |
+| M3-05 | 自動保存実装（500ms デバウンス） | `module:editor` | `Editor.svelte` 内の `EditorView.updateListener` + `debounce.ts` 連携 | `docChanged` 検知→500ms デバウンス→`api.ts` `saveNote()` 呼び出し。カーソル移動やスクロールでは発火しない。ノート切替時・`onDestroy` 時・ウィンドウクローズ時に未保存変更をフラッシュ |
+| M3-06 | `CopyButton.svelte` 実装（1クリックコピー） | `module:editor` | `CopyButton.svelte` | エディタ画面に常時表示。クリックで `EditorView.state.doc.toString()` を `navigator.clipboard.writeText()` でクリップボードにコピー。成功フィードバック（アイコン変更: 📋→✓、1.5秒表示）。フォールバック: `document.execCommand('copy')`。`aria-label="本文をクリップボードにコピー"` 付与。IPC 非経由（WebView 内 API） |
+| M3-07 | 新規ノート作成キーバインド（Cmd+N / Ctrl+N） | `module:editor` | CM6 キーマップ `{ key: "Mod-n", run: handleCreateNote }` | `api.ts` `createNote()` 呼び出し→戻り値 `{ filename }` で `currentFilename` 更新→ドキュメントを frontmatter テンプレート（`---\ntags: []\n---\n\n`）に置換→`EditorView.focus()` でフォーカス移動→本文入力位置にカーソル配置。キー押下からフォーカス完了まで 10ms 以内 |
+| M3-08 | 既存ノート読み込み（グリッドからの遷移対応） | `module:editor` | `Editor.svelte` の `filename` prop 受領 + `readNote()` 呼び出し | `App.svelte` から `selectedFilename` を受け取り、`onMount` で `readNote({ filename })` を呼び出して CodeMirror 6 にコンテンツをロード |
+| M3-09 | `api.ts` ラッパー関数の本実装接続 | 共有層 | `api.ts` の `createNote`, `saveNote`, `readNote`, `deleteNote` | M1-07 のスタブを実 `invoke` 呼び出しに置換。TypeScript 型注釈による引数・戻り値の型安全性保証 |
+| M3-10 | プラットフォームキーバインド検証 | `module:editor` | テスト結果 | Linux で `Ctrl+N`、macOS で `Cmd+N` がそれぞれ動作することを確認。CM6 の `Mod` プレフィックスによる自動マッピング検証 |
+| M3-11 | 自動保存デバウンス間隔の検証（OQ-004 解決） | `module:editor` | デバウンス間隔確定値 | 500ms をベースラインとしてプロトタイプテストを実施し、体感即時性と I/O 頻度のバランスで最終値を確定 |
 
-**プラットフォーム別デフォルトパス:**
+**Milestone 3 完了基準:** エディタ画面で Markdown シンタックスハイライト付き編集、frontmatter 背景色デコレーション、500ms デバウンス自動保存、1クリックコピーボタン、Cmd+N / Ctrl+N 新規ノート作成がすべて動作する。タイトル入力欄と Markdown プレビューが存在しないことを確認する。
 
-| プラットフォーム | ノート保存先 | 設定ファイル |
-|-----------------|-------------|-------------|
-| Linux | `~/.local/share/promptnotes/notes/` | `~/.config/promptnotes/config.json` |
-| macOS | `~/Library/Application Support/promptnotes/notes/` | `~/Library/Application Support/promptnotes/config.json` |
+### Milestone 4: グリッドビュー実装（7週目〜8週目）
 
-**完了条件:**
+`module:grid` の Svelte 実装を完了する。Masonry カードレイアウト、デフォルト7日間表示、タグ/日付フィルタ、全文検索、カードクリック遷移のすべてを実装する。
 
-- 全8 IPC コマンド（`create_note`、`save_note`、`read_note`、`list_notes`、`search_notes`、`get_all_tags`、`get_settings`、`update_settings`）が `#[tauri::command]` で登録され、単体テスト合格
-- ファイル名 `YYYY-MM-DDTHHMMSS.md` の生成・パース・不変性がテストで検証済み
-- パストラバーサル防止、ファイル名形式バリデーションがテストで検証済み
-- frontmatter パース（`serde_yaml`、`tags` のみ、寛容パース）がテストで検証済み
-- デフォルトディレクトリ解決・`config.json` 読み書き・ディレクトリ変更バリデーションが Linux・macOS 双方でテスト済み
-- `Cargo.toml` に `rusqlite`、`diesel`、`sea-orm`、`sqlx`、`reqwest`、`hyper` が含まれないことを CI で確認
+| タスク ID | タスク | 対象モジュール | 成果物 | 完了条件 |
+|----------|-------|--------------|--------|---------|
+| M4-01 | Masonry レイアウト技術選定（OQ-003 解決） | `module:grid` | 技術検証結果文書 + 実装方式確定 | WebKitGTK / WKWebView での CSS Columns（`column-count` / `column-width`）サポート状況を検証。不十分な場合は JavaScript ライブラリ（svelte-masonry 等）を採用 |
+| M4-02 | `GridView.svelte` ルートコンポーネント実装 | `module:grid` | `GridView.svelte` | `notes: NoteEntry[]` 状態管理、フィルタ条件（`fromDate`, `toDate`, `tag`, `query`）管理、`api.ts` 経由のデータ取得、ローディングインジケーター |
+| M4-03 | デフォルト7日間フィルタ実装 | `module:grid` | `GridView.svelte` の `onMount` 処理 | マウント時に `from_date = 今日 - 7日`, `to_date = 今日` を JavaScript `Date` で算出し、`listNotes({ from_date, to_date })` を呼び出す |
+| M4-04 | `NoteCard.svelte` カードコンポーネント実装 | `module:grid` | `NoteCard.svelte` | `body_preview`（200 文字）表示、`tags` バッジ表示、`created_at` 人間可読日時表示、カード全体クリック可能、可変高（固定高指定なし） |
+| M4-05 | `TagFilter.svelte` タグフィルタ実装 | `module:grid` | `TagFilter.svelte` | `NoteEntry.tags` からタグ候補を動的収集、単一タグ選択 UI、`dispatch('tag-change', { tag })` で親コンポーネントに通知 |
+| M4-06 | `DateFilter.svelte` 日付フィルタ実装 | `module:grid` | `DateFilter.svelte` | 日付範囲指定 UI、初期値はデフォルト7日間、`dispatch('date-change', { from_date, to_date })` で親コンポーネントに通知 |
+| M4-07 | 全文検索テキストボックス実装 | `module:grid` | `GridView.svelte` 内インライン実装 | テキスト入力→300ms デバウンス→`searchNotes({ query, from_date, to_date, tag })` 呼び出し。`query` 空時は `listNotes` に切替 |
+| M4-08 | フィルタ・検索の組み合わせ動作 | `module:grid` | 統合テスト | タグ + 日付 + 検索の任意組み合わせで正しい結果が表示される。フィルタ解除で DefaultView に復帰 |
+| M4-09 | カードクリック→エディタ遷移実装 | `module:grid`, `module:editor` | `NoteCard.svelte` の `dispatch('card-click')` + `App.svelte` `currentView` 切替 | カードクリック→`GridView` が `App.svelte` の `currentView = 'editor'`, `selectedFilename` を設定→`Editor.svelte` マウント→`readNote` IPC→CodeMirror ロード。体感遅延なし |
+| M4-10 | `api.ts` ラッパー関数の本実装接続（grid 系） | 共有層 | `api.ts` の `listNotes`, `searchNotes`, `deleteNote` | M1-07 のスタブを実 `invoke` 呼び出しに置換 |
+| M4-11 | 検索デバウンス間隔検証（OQ-GRID-001 解決） | `module:grid` | デバウンス間隔確定値 | 300ms をベースラインとしてプロトタイプテストを実施 |
 
----
+**Milestone 4 完了基準:** グリッドビューが Masonry レイアウトでノートカードを表示し、デフォルト7日間フィルタ・タグフィルタ・日付フィルタ・全文検索が動作し、カードクリックでエディタ画面に遷移できる。
 
-### M2: フロントエンド — `module:editor` 実装（2週間）
+### Milestone 5: 設定画面・統合・品質保証（9週目〜10週目）
 
-**目的:** CodeMirror 6 ベースのエディタ画面を実装し、自動保存・1クリックコピー・新規ノート作成のコア UX を完成させる。
+`module:settings` の Svelte UI 実装、全モジュール統合テスト、エラーハンドリング方式確定、パフォーマンス検証を実施する。
 
-**実装対象:**
+| タスク ID | タスク | 対象モジュール | 成果物 | 完了条件 |
+|----------|-------|--------------|--------|---------|
+| M5-01 | `Settings.svelte` 設定画面実装 | `module:settings` | `Settings.svelte` | ディレクトリ選択ボタン→Tauri ファイルダイアログ API（`open({ directory: true })`）→選択パスを `api.ts` `setConfig({ notes_dir })` で送信→Rust 側で検証・永続化。現在の `notes_dir` を `getConfig()` で表示 |
+| M5-02 | エラーハンドリング方式確定（OQ-006 解決） | 全モジュール | UX 方針文書 + 実装 | トースト通知・インライン表示・ダイアログのいずれかを選定し、全 IPC エラー（ファイル書き込み失敗、ディレクトリ不存在、ディスク容量不足等）のユーザー通知を統一的に実装 |
+| M5-03 | `notes_dir` 変更後のグリッドビュー再読み込み | `module:grid`, `module:settings` | 動作確認 | 設定画面からグリッドビューに戻った際、`onMount` で新ディレクトリの `list_notes` を再実行 |
+| M5-04 | 全画面遷移の統合テスト | 全フロントエンドモジュール | E2E テスト | エディタ→グリッド→設定→グリッド→エディタの遷移が正常に動作。各画面の状態が適切に初期化・保持される |
+| M5-05 | パフォーマンス計測 | `module:storage`, `module:grid` | 計測結果文書 | 1,000 件ノートでの `list_notes`（100ms 以下）、`search_notes`（200ms 以下）、`create_note`（1ms 以下）、`save_note`（1ms 以下）の閾値達成を確認 |
+| M5-06 | セキュリティテスト | `module:storage`, `module:shell` | テスト結果 | パストラバーサル攻撃（`../../etc/passwd` 等のファイル名）を `filename` バリデーションが正規表現 `^\d{4}-\d{2}-\d{2}T\d{6}(_\d+)?\.md$` で拒否することを確認。Tauri `allowlist` / permissions による WebView 直接ファイルアクセス遮断を確認 |
+| M5-07 | CI E2E テスト構築 | 全モジュール | CI パイプライン拡張 | Rust バックエンド + Svelte フロントエンドの E2E テスト（IPC コマンドの結合テスト）を Linux / macOS CI ランナーで実行。型の一致（Rust ↔ TypeScript）を検証 |
+| M5-08 | スコープ外機能の不存在確認 | 全モジュール | チェックリスト結果 | AI 呼び出し機能なし、クラウド同期なし、データベース利用なし、タイトル入力欄なし、Markdown プレビューなし、Windows ビルドなし、モバイル対応なし、手動保存ボタンなし を確認 |
 
-| コンポーネント | 実装内容 |
-|--------------|---------|
-| `EditorPage` コンポーネント | エディタ画面ルートコンテナ。DOM 構成: Toolbar + CodeMirrorContainer のみ。タイトル入力欄（`<input>`、`<textarea>`、`contenteditable` タイトル要素）を一切含めない。Markdown プレビューパネルを含めない。 |
-| CodeMirror 6 統合 | `EditorState.create` に以下の extensions 配列を構成: `markdown()`（`@codemirror/lang-markdown`）、`frontmatterDecoration()`、`autoSaveListener()`、`keymap.of(promptNotesKeymap)`、`keymap.of(defaultKeymap)`、`keymap.of(historyKeymap)`、`history()`、`EditorView.lineWrapping` |
-| `FrontmatterDecoration` ViewPlugin | `ViewPlugin.fromClass` で実装。`Decoration.line` による背景色 CSS クラス（`.cm-frontmatter-line { background-color: rgba(135, 206, 250, 0.12) }`）付与。3状態遷移: デコレーションなし → 部分 frontmatter → 完全 frontmatter。 |
-| `AutoSaveListener` エクステンション | `EditorView.updateListener.of` で `docChanged` 検出。デバウンス間隔 1000ms（暫定値、OQ-002）。`saving` フラグで重複保存防止。デバウンス完了後 `invoke("save_note", { filename, content })` 呼び出し。 |
-| `promptNotesKeymap` エクステンション | `keymap.of([{ key: "Mod-n", run: handleCreateNote }])`。`Mod` は macOS で `Cmd`、Linux で `Ctrl`。未保存変更の即時保存（デバウンスバイパス、`await` で完了待ち） → `invoke("create_note")` → `read_note` → `EditorState` 再構築 → 本文先頭（frontmatter 直後）にカーソル配置・フォーカス移動。 |
-| `CopyButton` コンポーネント | ツールバー配置。クリック時: `editorView.state.doc.toString()` → 正規表現 `/^---\n[\s\S]*?\n---\n/` で frontmatter 除外 → `bodyText.trim()` → `navigator.clipboard.writeText(trimmedBody)`。コピー完了フィードバック: ボタンアイコンを ✓ に1.5秒間一時変更（暫定値、OQ-009）。連続クリック時は即座にリセットし新たに ✓ 表示。 |
-| エラーハンドリング | `save_note` IPC 失敗: インライン警告バー表示、次変更時再試行。`create_note` IPC 失敗: インラインエラー表示、現在ノート維持。`read_note` IPC 失敗: エラー画面 + グリッドビュー戻りリンク。`navigator.clipboard.writeText` 失敗: ボタンにエラーアイコン一時表示。 |
-| ルーティング | `/edit/:filename`（既存ノート編集）、`/edit/new`（新規ノート作成、`Cmd+N`/`Ctrl+N` と同等） |
+**Milestone 5 完了基準:** 設定画面が動作し、全モジュール統合テスト・パフォーマンステスト・セキュリティテストが通過する。スコープ外機能が存在しないことを確認する。
 
-**必須 npm パッケージ:**
+### Milestone 6: 配布パッケージ作成・リリース（11週目〜12週目）
 
-| パッケージ | 用途 |
-|-----------|------|
-| `@codemirror/state` | エディタ状態管理 |
-| `@codemirror/view` | エディタビュー・DOM 統合 |
-| `@codemirror/lang-markdown` | Markdown シンタックスハイライト（レンダリングではない） |
-| `@codemirror/commands` | 基本編集コマンド（undo/redo 等） |
-| `@codemirror/language` | 言語サポート基盤（`lang-markdown` 依存） |
+Linux / macOS 向け配布パッケージを作成し、リリース可能な状態にする。
 
-**禁止パッケージ:** `marked`、`markdown-it`、`remark-html` 等の Markdown → HTML 変換ライブラリ。`@codemirror/view` の `Decoration.widget` を使った HTML プレビューウィジェット。
+| タスク ID | タスク | 対象プラットフォーム | 成果物 | 完了条件 |
+|----------|-------|-------------------|--------|---------|
+| M6-01 | Linux バイナリビルド（`.AppImage`, `.deb`） | Linux | 配布バイナリ | `tauri build` で `.AppImage` と `.deb` が生成され、Ubuntu / Fedora 等で起動・動作確認 |
+| M6-02 | Linux Flatpak パッケージ作成（Flathub 申請） | Linux | Flatpak マニフェスト | Flatpak ビルド成功、ローカルインストールでの動作確認 |
+| M6-03 | Linux NixOS パッケージ作成 | Linux | Nix 式 | NixOS 環境での `nix-build` 成功、起動・動作確認 |
+| M6-04 | macOS `.dmg` ビルド | macOS | `.dmg` インストーラ | `tauri build` で `.dmg` 生成、macOS でのインストール・起動・動作確認 |
+| M6-05 | macOS Homebrew Cask 定義作成 | macOS | Cask Formula | `brew install --cask promptnotes` でインストール・起動可能 |
+| M6-06 | 全配布形式でのスモークテスト | Linux, macOS | テスト結果 | 全配布形式で新規ノート作成→編集→自動保存→コピー→グリッド表示→検索→設定変更の一連のフローが動作 |
+| M6-07 | リリースノート作成 | — | リリースノート文書 | 機能一覧、対応プラットフォーム、既知の制約（Open Questions の残存項目）を記載 |
 
-**完了条件:**
+**Milestone 6 完了基準:** Linux（`.AppImage`, `.deb`, Flatpak, NixOS パッケージ）および macOS（`.dmg`, Homebrew Cask）の全配布形式でアプリケーションが正常に動作する。
 
-- CodeMirror 6 インスタンスが正常動作し、Markdown シンタックスハイライトが適用されている
-- frontmatter 領域が背景色（`.cm-frontmatter-line`）で視覚的に区別されている
-- `Cmd+N`（macOS）/ `Ctrl+N`（Linux）でフォーカス移動完了まで体感遅延なしで新規ノート作成できる
-- 1クリックコピーボタンで frontmatter 除外後の本文全文がクリップボードにコピーされ、✓ フィードバックが表示される
-- 自動保存がデバウンス後に `save_note` IPC を正常に呼び出し、手動保存（`Cmd+S`/`Ctrl+S`、ボタン）が存在しない
-- エディタ画面 DOM にタイトル入力欄が存在しないことを Playwright で自動検証（FAIL-04）
-- プレビューパネル・レンダリング UI が存在しないことを Playwright で自動検証（FAIL-05）
-- `package.json` に Markdown レンダリングライブラリが含まれないことを CI で確認
-- Linux・macOS 双方で動作確認済み
+### Open Questions の解決スケジュール
 
----
+Open Questions は各マイルストーンで段階的に解決する。
 
-### M3: フロントエンド — `module:grid` + `module:settings` 実装（2週間）
-
-**目的:** グリッドビュー（Pinterest スタイルカードレイアウト、フィルタ、検索）と設定画面を実装し、アプリケーションの画面遷移を完成させる。
-
-**`module:grid` 実装対象:**
-
-| コンポーネント | 実装内容 |
-|--------------|---------|
-| `GridPage` | ルートコンポーネント。マウント時に `list_notes`（デフォルト直近7日間: `from_date = now - 7日`, `to_date = now`）と `get_all_tags` を `Promise.all` で並行呼び出し。7日間の算出はフロントエンド側。 |
-| `FilterBar` | `TagFilter` + `DateFilter` のコンテナ。 |
-| `TagFilter` | `get_all_tags` で取得したタグ一覧からドロップダウン選択。選択時 `list_notes` を `tag` 引数付きで再呼び出し。日付フィルタとの AND 結合。 |
-| `DateFilter` | `<input type="date">` による日付範囲（`from_date`, `to_date`）入力。初期値は直近7日間。変更時 `list_notes` 再呼び出し。 |
-| `SearchBar` | 全文検索入力欄。入力デバウンス 300ms。デバウンス完了後 `invoke("search_notes", { query, from_date?, to_date? })`。クエリ空でフィルタモード復帰。 |
-| `CardGrid` | `NoteEntry[]` を Pinterest スタイル Masonry レイアウトで描画。M0 で確定した方式（CSS `columns` / CSS Grid `masonry` / JS ライブラリ）で実装。 |
-| `NoteCard` | カード表示要素: `created_at`（日時）、`tags`（チップ形式）、`preview`（本文プレビュー）。タイトル表示欄なし。`onClick` → `navigate("/editor/{filename}")`。`role="button"` + `tabIndex={0}` でキーボードアクセシビリティ対応。 |
-| フィルタモード/検索モード排他制御 | 検索バーにクエリがある間は `search_notes` を使用、クエリ空で `list_notes` に切り替え。 |
-
-**`module:settings` 実装対象:**
-
-| コンポーネント | 実装内容 |
-|--------------|---------|
-| `SettingsPage` | 設定画面コンポーネント。マウント時 `invoke("get_settings")` で現在の `notes_dir` を取得・表示。 |
-| ディレクトリ変更 UI | 新しいディレクトリパス文字列を入力し、`invoke("update_settings", { notes_dir })` で送信。フロントエンドはパスの正規化・ディレクトリ作成・`config.json` 書き込みには関与しない。 |
-
-**ルーティング定義（全画面）:**
-
-| ルートパス | 画面 | 所有モジュール |
-|-----------|------|--------------|
-| `/` または `/grid` | グリッドビュー（デフォルト画面） | `module:grid` |
-| `/editor/:filename` | エディタ画面 | `module:editor` |
-| `/settings` | 設定画面 | `module:settings` |
-
-**完了条件:**
-
-- グリッドビューに Pinterest スタイル可変高カードが表示される
-- 画面マウント時にデフォルト直近7日間のノートが表示される
-- タグフィルタ（ドロップダウン選択）・日付フィルタ（日付範囲変更）が AND 条件で正常動作する
-- 全文検索（300ms デバウンス後）が case-insensitive で結果を返す
-- カードクリックで `/editor/{filename}` に SPA 遷移し、エディタに該当ノートが表示される
-- 設定画面で保存ディレクトリを変更でき、変更後のディレクトリにノートが保存される
-- フロントエンドから直接ファイルシステムアクセスが不可能であることを確認
-- Linux・macOS 双方で動作確認済み
-
----
-
-### M4: 統合テスト・E2E テスト・品質保証（2週間）
-
-**目的:** 全モジュールを統合した E2E テスト、リリース不可制約の自動検証、パフォーマンスベンチマーク、クロスプラットフォーム動作確認を完了する。
-
-**テスト項目:**
-
-| テストカテゴリ | 対象 | 検証内容 |
-|--------------|------|---------|
-| IPC 境界統合テスト | 全8コマンド | フロントエンド → IPC → Rust バックエンド → ファイルシステムの往復が全コマンドで正常動作 |
-| FAIL-04 受け入れテスト | `module:editor` | エディタ画面 DOM にタイトル入力欄（`[data-testid="title-input"]`、タイトル用 `<input>`、`<h1 contenteditable>` 等）が存在しないこと（Playwright） |
-| FAIL-05 受け入れテスト | `module:editor` | プレビューパネル・レンダリング UI が存在しないこと（Playwright） |
-| 1クリックコピー E2E テスト | `module:editor` | コピーボタンクリック後クリップボードに frontmatter 除外の本文全文が書き込まれていること |
-| `Cmd+N`/`Ctrl+N` E2E テスト | `module:editor` | キーバインド発火 → 新規ノート作成 → 本文先頭フォーカス移動まで体感遅延なし |
-| 自動保存 E2E テスト | `module:editor` + `module:storage` | テキスト入力 → デバウンス → ファイル書き込み完了をファイルシステム上で検証 |
-| グリッドビュー E2E テスト | `module:grid` | デフォルト7日間フィルタ、タグフィルタ、日付フィルタ、全文検索、カードクリック遷移 |
-| 設定変更 E2E テスト | `module:settings` | ディレクトリ変更 → `config.json` 更新 → 新ディレクトリへのノート保存 |
-| セキュリティテスト | IPC 境界 | パストラバーサル攻撃（`../` 含むファイル名）の拒否、`allowlist` 全 false の検証、CSP `connect-src` 制限の検証 |
-| パフォーマンスベンチマーク | `list_notes`、`search_notes` | 5,000 件規模での応答時間計測。許容範囲超過時 Tantivy 導入 ADR 起票。 |
-| クロスプラットフォームテスト | 全モジュール | Linux（WebKitGTK）・macOS（WKWebView）双方での全 E2E テスト実行 |
-| frontmatter 背景色テスト | `module:editor` | frontmatter 領域に背景色デコレーションが適用されていること（Visual regression テスト / 手動 UI レビュー） |
-| 排除機能 CI ガード | 全体 | `Cargo.toml` 禁止クレート検査、`package.json` 禁止パッケージ検査、`tauri.conf.json` allowlist 検査 |
-
-**未決定事項の最終確定:**
-
-| 項目 | 確定方法 |
-|------|---------|
-| 自動保存デバウンス間隔（OQ-002） | ユーザーテストで体感遅延と保存信頼性を検証し 500ms–2000ms 内で最終値決定 |
-| frontmatter 背景色カラー値（OQ-007） | デザインレビューでライトモード・ダークモードの値を確定 |
-| コピー完了フィードバック表示時間（OQ-009） | ユーザーテストで 1.5秒の妥当性を検証 |
-| プレビュー文字数上限（OQ-004 / GS-OQ-003） | デザインモックアップで視覚的に検証し暫定 200 文字から調整 |
-| 検索の大文字小文字区別（OQ-003 / GS-OQ-004） | 日本語・英語混在テキストでの検索精度検証 |
-
-**完了条件:**
-
-- 全 E2E テストが Linux・macOS 双方で合格
-- FAIL-04、FAIL-05 受け入れテストが CI で自動実行・合格
-- パフォーマンスベンチマーク（5,000 件）が実行され、結果が記録されている
-- 排除機能 CI ガードが全パス
-- 全未決定事項が確定値で実装されている
-
----
-
-### M5: 配布パッケージング・リリース準備（1週間）
-
-**目的:** Linux・macOS 向けの配布アーティファクトを生成し、配布チャネルへの登録準備を完了する。
-
-**配布パイプライン:**
-
-| OS | 形式 | ビルドコマンド | 配布チャネル |
-|----|------|--------------|-------------|
-| Linux | `.AppImage` / `.deb` | `tauri build` | GitHub Releases |
-| Linux | Flatpak | Flathub マニフェスト + `flatpak-builder` | Flathub |
-| Linux | Nix パッケージ | `flake.nix` / `default.nix` | NixOS パッケージリポジトリ / Flake |
-| macOS | `.dmg` | `tauri build` | GitHub Releases |
-| macOS | Homebrew Cask | Cask フォーミュラ | Homebrew Cask tap |
-
-**Windows 向けビルド・配布パイプラインは構築しない。**
-
-**完了条件:**
-
-- Linux 向け `.AppImage`/`.deb`、Flatpak、Nix パッケージが CI で自動ビルドされる
-- macOS 向け `.dmg`、Homebrew Cask フォーミュラが CI で自動ビルドされる
-- 全配布アーティファクトが Linux・macOS の各プラットフォームでインストール・起動・基本操作が確認されている
-- リリースノートが作成されている
-- Windows 向けアーティファクトが存在しないことが確認されている
-
----
-
-### マイルストーン全体タイムライン
-
-| マイルストーン | 期間 | 依存関係 |
-|-------------|------|---------|
-| M0: 技術検証・基盤構築 | 2週間 | なし |
-| M1: Rust バックエンドコア | 2週間 | M0 完了後 |
-| M2: `module:editor` 実装 | 2週間 | M1 完了後（IPC コマンド利用のため） |
-| M3: `module:grid` + `module:settings` 実装 | 2週間 | M1 完了後（M2 と並行可能だが、カードクリック遷移テストに M2 が必要） |
-| M4: 統合テスト・品質保証 | 2週間 | M2 + M3 完了後 |
-| M5: 配布パッケージング | 1週間 | M4 完了後 |
-
-合計: 約11週間（M2 と M3 の並行度により短縮可能）
-
----
+| ID | 質問概要 | 解決マイルストーン | 解決方法 |
+|----|---------|-------------------|---------|
+| OQ-002 | frontmatter デコレーション実装方式（`ViewPlugin` vs `StateField` + `Decoration`） | M3（M3-03） | プロトタイプ技術検証で Svelte ライフサイクルとの統合パターンを評価し選定 |
+| OQ-003 | Masonry レイアウト実装方式（CSS Columns vs JavaScript ライブラリ） | M4（M4-01） | WebKitGTK / WKWebView での CSS Columns 動作検証。不十分な場合は svelte-masonry を採用 |
+| OQ-004 | 自動保存デバウンス間隔（500ms vs 1000ms 等） | M3（M3-11） | 500ms ベースラインでプロトタイプテスト、体感即時性と I/O 頻度で最終値を確定 |
+| OQ-005 | Tauri バージョン選定（v1 vs v2） | M1（M1-02） | 開発開始時点の安定版を評価し選定。v2 の permissions モデルと v1 の allowlist モデルの比較 |
+| OQ-006 | IPC エラー通知方式（トースト / インライン / ダイアログ） | M5（M5-02） | UI プロトタイプでユーザーテスト後に選定 |
+| OQ-E01 | CopyButton フィードバック表現 | M3（M3-06） | アイコン変更（📋→✓）を暫定実装し、UI プロトタイプで最終判断 |
+| OQ-E02 | EditorView テキスト共有方式（props callback vs Svelte context） | M3（M3-06） | 依存明示性を重視し `getTextFn` props 方式を優先候補としつつ、開発着手時に確定 |
+| OQ-SF-001 | 同一秒ファイル名衝突時のサフィックス vs ミリ秒精度 | M2（M2-01） | `_1`, `_2` サフィックス方式で実装し、プロトタイプでの衝突頻度を観察 |
+| OQ-SF-002 | `body_preview` 文字数上限（200 文字の妥当性） | M4（M4-04） | Masonry カードデザイン確定時に NoteCard 表示とのバランスで調整 |
+| OQ-GRID-001 | 検索デバウンス間隔（300ms vs 500ms） | M4（M4-11） | 300ms ベースラインでテスト |
+| OQ-GRID-002 | タグフィルタ単一 vs 複数選択 | M4（M4-05） | 単一タグ選択で初期実装。ユーザーフィードバック後に複数対応を検討 |
+| OQ-GRID-003 | グリッドビュー上の削除操作 UI | M4 または M5 | UI プロトタイプでの UX 検討後に確定 |
 
 ## 3. Risks
 
-### R1: WebView エンジン互換性リスク
+### R1: WebKitGTK の CSS / API サポート差異
 
-**リスク:** Linux（WebKitGTK）と macOS（WKWebView）で CSS レイアウト（Masonry）、`<input type="date">` の日付ピッカー UI、CodeMirror 6 の描画動作に差異が発生し、デュアルプラットフォーム品質維持のコストが増大する。
+**影響:** `module:grid`（Masonry レイアウト）、`module:editor`（クリップボード API）
+**詳細:** Linux 環境の WebKitGTK は WKWebView（macOS）と比較して CSS / JavaScript API のサポートに差異がある。CSS Masonry（`grid-template-rows: masonry`）は WebKitGTK で未サポートの可能性が高く、`navigator.clipboard.writeText()` の Secure Context 判定にも差異が生じうる。
+**対策:** M4-01 で CSS Columns サポート状況を早期検証し、不十分な場合は JavaScript ライブラリ（svelte-masonry 等）にフォールバック。`CopyButton.svelte` には `document.execCommand('copy')` フォールバックを実装（M3-06）。M1 段階で Linux / macOS 両環境のビルド・起動を確認し、プラットフォーム差異を早期検出する。
 
-**影響:** M0 の技術検証遅延、M3 のグリッドビュー実装期間超過。
+### R2: Tauri バージョン（v1 vs v2）の選定リスク
 
-**緩和策:** M0 で WebKitGTK・WKWebView 双方の技術検証プロトタイプを必須とする。CSS `columns` フォールバックまたは JavaScript ベース Masonry ライブラリ（`react-masonry-css` 等）を準備する。日付ピッカーが不十分な場合は軽量な日付入力コンポーネントで代替する。全 E2E テストを Linux・macOS 双方で実行する CI マトリクスを M0 で構築する。
+**影響:** `module:shell`、全 IPC 通信
+**詳細:** Tauri v2 では IPC モデルが permissions ベースに変更され、`allowlist` 設定方式が大幅に異なる。v2 の安定性が不十分な場合は v1 を選択する必要があるが、v1 は将来メンテナンス終了のリスクがある。
+**対策:** M1-02 で開発開始時点の安定版を評価し、IPC 境界設計（`allowlist` / permissions による `fs` スコープ制限、WebView 直接ファイルアクセス遮断）の実装方式をバージョンに応じて確定する。v1 → v2 マイグレーションの影響範囲を M1-03 の段階で文書化する。
 
-### R2: UI フレームワーク選定リスク（OQ-001）
+### R3: ファイル全走査検索のスケーラビリティ
 
-**リスク:** React と Svelte の技術検証で、CodeMirror 6 統合安定性・frontmatter カスタムデコレーション実装容易性・Tauri IPC 統合パターンにおいて、どちらのフレームワークも十分な品質を示さず、選定が遅延する。
+**影響:** `module:storage`（`search_notes`, `list_notes`）、`module:grid`
+**詳細:** 全文検索はインデックスエンジンなしの `str::to_lowercase().contains()` によるファイル全走査であるため、ノート蓄積が 5,000 件を超過すると `search_notes` の 200ms 以下閾値を超過するリスクがある。
+**対策:** M5-05 のパフォーマンス計測で 1,000 件での応答時間を測定し、5,000 件到達時の推定を算出する。閾値超過が予測される場合は `tantivy` クレート（Rust 製全文検索エンジン）の導入計画を策定する。初期リリースでは全走査方式とし、ユーザーのノート蓄積が 5,000 件に達する前にインデックスエンジンを導入する。
 
-**影響:** M0 完了遅延 → M2、M3 の開始遅延。全フロントエンドコンポーネント（`EditorPage`、`CopyButton`、`GridPage`、`CardGrid`、`NoteCard`、`FilterBar`、`SearchBar`、`SettingsPage`）の実装方式が未定のまま開発が進行するリスク。
+### R4: CodeMirror 6 の IME 統合
 
-**緩和策:** M0 の技術検証プロトタイプで、CodeMirror 6 の `ViewPlugin`（frontmatter デコレーション）と `EditorView.updateListener`（自動保存）の統合を必須検証項目とする。タイムボックスを2週間に厳守し、期限内にプロトタイプ結果で判定する。判定基準を事前に定量化する（ビルドサイズ閾値、デコレーション描画遅延閾値、コード行数比較）。
+**影響:** `module:editor`
+**詳細:** CodeMirror 6 の日本語 IME 対応は WebKitGTK（Linux）と WKWebView（macOS）で挙動が異なる可能性がある。特に IME のコンポジション中の `EditorView.updateListener` 発火タイミングが環境依存であり、自動保存のデバウンスに影響する。
+**対策:** M3-05 の自動保存実装時に両プラットフォームで IME 入力テストを実施する。`docChanged` が IME コンポジション完了前に誤発火する場合、`compositionstart` / `compositionend` イベントによるデバウンス一時停止ロジックを追加する。
 
-### R3: Tauri バージョン互換性リスク（OQ-006）
+### R5: 同一秒ファイル名衝突
 
-**リスク:** Tauri v2 安定版リリースにより、`allowlist` → permissions 体系への移行、IPC モデル変更、CSP 設定方式の変更が発生し、`tauri.conf.json` 構成・IPC コマンド登録パターン・セキュリティモデルの全面的な書き換えが必要になる。
+**影響:** `module:storage`（`create_note`）
+**詳細:** ファイル名形式 `YYYY-MM-DDTHHMMSS.md` は秒精度であるため、高速連続で `Cmd+N` / `Ctrl+N` を押下した場合にファイル名が衝突する可能性がある。`_1`, `_2` サフィックス付与で回避するが、既存ファイルの走査コストが増加する。
+**対策:** M2-01 でサフィックス付与ロジックを実装し、ユニットテストで連続作成シナリオを検証する。頻発が確認された場合は OQ-SF-001 の判断としてミリ秒精度タイムスタンプ（`YYYY-MM-DDTHHMMSS.SSS.md`）への変更を検討する。
 
-**影響:** M1 の `module:shell` 実装が Tauri v2 非互換となり、大規模リファクタリングが発生する。IPC エンフォースメントの3層（allowlist、CSP、パスバリデーション）のうち allowlist 層の再実装が必要になる可能性。
+### R6: 配布パッケージの多形式対応工数
 
-**緩和策:** M0 開始時点で Tauri v2 のリリース状況を評価し、v1 または v2 を確定する。v1 を選択した場合のマイグレーションパスを ADR として記録する。IPC コマンド登録（`#[tauri::command]` マクロ）と CSP 設定は Tauri v1/v2 間で互換性が高いため、パスバリデーション（第3層）に依存する堅牢な設計を維持する。
+**影響:** M6 全体
+**詳細:** Linux だけで `.AppImage`, `.deb`, Flatpak（Flathub）, NixOS パッケージの4形式、macOS で `.dmg` + Homebrew Cask の2形式、合計6形式の配布パッケージを作成・テストする必要がある。各形式固有のビルド設定・メタデータ・依存関係解決に予想以上の工数がかかるリスクがある。
+**対策:** M6 に2週間を確保し、Tauri の標準ビルド出力（`.AppImage`, `.deb`, `.dmg`）を優先的に完成させる。Flatpak・NixOS パッケージ・Homebrew Cask はコミュニティの既存テンプレートを活用し、並行して作業する。CI にマルチプラットフォームビルドマトリクスを構成し、自動化を最大限活用する。
 
-### R4: 全文検索パフォーマンスリスク（OQ-005 / GS-OQ-005）
+### R7: 設定ディレクトリ変更後の既存ノート非移動
 
-**リスク:** ノート件数が増加した場合、`str::contains` によるファイル全走査の `search_notes` 応答時間がユーザー許容範囲を超える。`list_notes` もファイル名走査 + frontmatter パースの全量処理であり、大量ファイルで劣化する。
+**影響:** `module:settings`, `module:storage`, ユーザー体験
+**詳細:** 保存ディレクトリ変更後、既存ノートは自動移動されない。ユーザーが手動移動を忘れた場合、旧ディレクトリのノートが見えなくなる。
+**対策:** M5-01 の設定画面で「既存ノートは新しいディレクトリに自動移動されません」という明示的な警告メッセージを表示する。将来的な移動支援機能は OQ-SF-003 として保留し、ユーザーフィードバック収集後に検討する。
 
-**影響:** M4 のパフォーマンスベンチマークで許容範囲超過が判明した場合、Tantivy 導入による `module:storage` 内部構成変更、フロントエンド側の仮想スクロール（`react-window` / `svelte-virtual-list`）導入が追加タスクとなる。
+### リリース不可制約の遵守確認
 
-**緩和策:** 当面の想定規模は5,000件以下であり、`str::contains` 方式で実用的応答速度を確保できる見込み。M4 で5,000件規模のベンチマークを必須実施する。許容範囲超過時は Tantivy 導入 ADR を起票し、M5 の配布パッケージングとは独立した追加マイルストーンとして対応する。`module:storage` の IPC インターフェース（`list_notes`、`search_notes` の引数・戻り値）は変更不要であり、バックエンド内部実装の置換で対応可能な設計とする。
+本実装計画は以下のリリース不可制約を全マイルストーンにわたって遵守する。各制約の検証タイミングを明示する。
 
-### R5: 自動保存データ消失リスク
-
-**リスク:** 手動保存（`Cmd+S`/`Ctrl+S`、ボタン）を実装しない設計のため、デバウンス間隔（500ms–2000ms）中のアプリクラッシュ・強制終了でデバウンス未完了分の入力が消失する。
-
-**影響:** ユーザーの入力データが最大デバウンス間隔分（最大2秒分）消失する可能性。
-
-**緩和策:** `Cmd+N`/`Ctrl+N` 新規ノート作成時はデバウンスバイパスで即時保存（`await` で完了待ち）する設計を採用済み。デバウンス間隔の暫定値を 1000ms とし、M4 のユーザーテストでデータ消失リスクと保存頻度のバランスを検証して最終値を確定する。デバウンス完了前のアプリ終了（`beforeunload` イベント相当）時に即時保存をトリガーする追加ガードの導入を検討する。
-
-### R6: ファイル名衝突リスク（Storage OQ-001）
-
-**リスク:** `Cmd+N`/`Ctrl+N` の連打やプログラム的な高速呼び出しにより、同一秒内に `create_note` が複数回実行され、`YYYY-MM-DDTHHMMSS.md` のファイル名が衝突する。
-
-**影響:** 2回目以降の `create_note` がエラーとなり、新規ノート作成に失敗する。
-
-**緩和策:** `path.exists()` チェックで衝突を検出し、`StorageError::FilenameCollision` エラーを返却する設計を採用済み。フロントエンド側で `create_note` エラー時にユーザーへインラインエラーメッセージを表示し、再試行（1秒後に自動リトライ）する。現実的にはプロンプトノートの作成頻度は低く、秒精度での衝突は極めてまれである。M4 の連打テストで発生頻度を検証し、頻度が無視できない場合はミリ秒精度への拡張を検討する。
-
-### R7: 外部ツール互換性リスク（Storage OQ-003）
-
-**リスク:** Obsidian vault 内サブディレクトリとして保存ディレクトリを指定した場合、Obsidian が追加する frontmatter フィールド（`aliases`、`cssclass` 等）が `save_note` による上書きで消失する。
-
-**影響:** Obsidian との共存が事実上不可能となり、ユーザーのワークフロー互換性が損なわれる。
-
-**緩和策:** M1 の `module:storage` 実装時に frontmatter の保持ポリシーを確定する。互換性重視の場合は raw YAML 文字列を部分更新する方式を採用し、`tags` フィールドのみを変更して他フィールドを保持する。シンプル実装の場合は `tags` のみ再生成する方式とし、Obsidian 互換性の制限事項をリリースノートに明記する。技術検証で両方式の実装コストを比較し、M1 完了時に確定する。
-
-### R8: 配布チャネル登録リスク
-
-**リスク:** Flatpak（Flathub）への登録審査、Homebrew Cask tap への登録プロセスに想定以上の時間がかかる。Nix パッケージのビルド定義（`flake.nix`）が Tauri アプリケーションのビルド要件と適合しない。
-
-**影響:** M5 の期間超過。一部配布チャネルでのリリース遅延。
-
-**緩和策:** M5 とは独立して、Flathub マニフェスト・Homebrew Cask フォーミュラ・`flake.nix` のドラフト作成を M4 期間中に開始する。GitHub Releases（`.AppImage`/`.deb`、`.dmg`）を最低限の配布チャネルとし、Flathub・Homebrew Cask・Nix は順次対応とする。各配布チャネルの審査プロセスのリードタイムを M0 で事前調査する。
+| 制約 | 内容 | 検証マイルストーン |
+|------|------|-------------------|
+| `platform:linux`, `platform:macos` | Linux（バイナリ・Flatpak・NixOS）および macOS（バイナリ・Homebrew Cask）配布必須。Windows は対象外 | M1（ビルド確認）、M6（全配布形式テスト） |
+| `module:editor` 完了 | CodeMirror 6 Markdown 編集、frontmatter デコレーション、自動保存、1クリックコピー、Cmd+N/Ctrl+N | M3（実装完了）、M5（統合テスト） |
+| `module:grid` 完了 | Masonry カード、7日間デフォルト、タグ/日付フィルタ、全文検索、カードクリック遷移 | M4（実装完了）、M5（統合テスト） |
+| `module:storage` 完了 | 全 IPC コマンド実装（CRUD、list、search）、frontmatter パース、ファイル名バリデーション | M2（実装完了）、M5（統合テスト） |
+| `module:settings` 完了 | `get_config` / `set_config` 実装、ディレクトリ選択 UI | M2（Rust 側）、M5（UI 側、統合テスト） |
+| `framework:tauri` IPC 境界 | 全ファイル操作は Rust バックエンド経由。WebView 直接ファイルアクセス禁止 | M1（allowlist 設定）、M5（セキュリティテスト） |
+| 設定永続化バックエンド排他 | 設定変更は Rust バックエンドで永続化。フロントエンド単独でのファイルパス操作禁止 | M2（Rust 実装）、M5（統合テスト） |
+| スコープ外機能の不在 | AI 呼び出し・クラウド同期・Markdown プレビュー・モバイル対応・タイトル入力欄・手動保存ボタン・Windows ビルドが存在しない | M5-08（チェックリスト確認）、M6（最終確認） |

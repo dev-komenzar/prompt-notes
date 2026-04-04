@@ -20,11 +20,13 @@ AIへ渡すプロンプトを素早く書き溜めるためのノートアプリ
 | 項目 | 決定 |
 |---|---|
 | フレームワーク | Tauri（Rust + WebView） |
-| フロントエンド | React または Svelte（未定） |
+| フロントエンド | Svelte |
 | エディタ | CodeMirror 6 |
 | データ保存 | ローカル .md ファイル |
 | 検索 | ファイル全走査（件数が少ないため十分） |
 | ターゲット | Linux, macOS（Windows は将来対応） |
+
+React vs Svelte: コンパイルされるsvelteを採用する。
 
 ### Tauriを選んだ理由
 
