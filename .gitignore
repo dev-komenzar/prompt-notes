@@ -1,0 +1,151 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Tauri build output
+src-tauri/target/
+
+# Editor files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+```
+
+Now let me add the missing `once_cell` dependency to the Rust Cargo.toml, since we use it in config.rs:
+
+=== FILE: src-tauri/Cargo.toml === (CORRECTED)
+```toml
+[package]
+name = "promptnotes"
+version = "0.1.0"
+description = "A local-first prompt note-taking app"
+authors = ["dev-komenzar"]
+edition = "2021"
+
+[lib]
+name = "promptnotes_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+chrono = { version = "0.4", features = ["serde"] }
+glob = "0.3"
+dirs = "5"
+once_cell = "1"
+```
+
+---
+
+**Project File Tree Summary:**
+
+```
+promptnotes/
+├── .gitignore
+├── index.html
+├── package.json
+├── tsconfig.json
+├── tsconfig.node.json
+├── svelte.config.js
+├── vite.config.ts
+├── public/
+│   └── vite.svg
+├── src/
+│   ├── main.ts
+│   ├── vite-env.d.ts
+│   ├── App.svelte
+│   ├── lib/
+│   │   ├── types.ts
+│   │   ├── api.ts
+│   │   ├── debounce.ts
+│   │   ├── frontmatter.ts
+│   │   ├── date-utils.ts
+│   │   ├── clipboard.ts
+│   │   ├── stores.ts
+│   │   └── editor/
+│   │       ├── setup.ts
+│   │       ├── frontmatter-decoration.ts
+│   │       ├── autosave.ts
+│   │       └── keymaps.ts
+│   └── components/
+│       ├── Toolbar.svelte
+│       ├── Editor.svelte
+│       ├── CopyButton.svelte
+│       ├── GridView.svelte
+│       ├── NoteCard.svelte
+│       ├── TagFilter.svelte
+│       ├── DateFilter.svelte
+│       ├── Settings.svelte
+│       └── ToastContainer.svelte
+└── src-tauri/
+    ├── Cargo.toml
+    ├── tauri.conf.json
+    ├── build.rs
+    └── src/
+        ├── main.rs
+        ├── lib.rs
+        ├── config.rs
+        ├── notes.rs
+        └── commands.rs
+```
+
+**Design Decision Traceability:**
+
+| Decision | Sprint/OQ | Implementation |
+|----------|-----------|----------------|
+| Tauri v2 (no Electron/Wails) | OQ-005/Sprint 69 | `src-tauri/`, `@tauri-apps/api@^2` |
+| Svelte (not React) | ADR | `svelte@^4`, `App.svelte`, all `.svelte` components |
+| CodeMirror 6 (no Monaco/Ace/ProseMirror) | ADR | `src/lib/editor/setup.ts`, `codemirror@^6` |
+| Local .md only (no DB, no cloud) | Design doc | All I/O through `src-tauri/src/notes.rs` |
+| YAML frontmatter with `tags` only | Design doc | `src/lib/frontmatter.ts`, `notes.rs::extract_tags` |
+| Filename `YYYY-MM-DDTHHMMSS.md` with `_N` suffix | Design doc | `notes.rs::generate_filename` |
+| SPA via `currentView` (no router lib) | Design doc | `src/lib/stores.ts::currentView`, `App.svelte` |
+| 500ms auto-save debounce | OQ-004/Sprint 68 | `src/lib/editor/autosave.ts` |
+| CSS Columns masonry | OQ-003/Sprint 67 | `GridView.svelte::masonry-grid` |
+| Default 7-day filter | Design doc | `date-utils.ts::getDefaultDateRange(7)` |
+| `navigator.clipboard.writeText` + execCommand fallback | Design doc | `src/lib/clipboard.ts` |
+| `Cmd+N` / `Ctrl+N` for new note | Design doc | `src/lib/editor/keymaps.ts` (Mod-n) |
+| StateField + Decoration for frontmatter | OQ-002/Sprint 66 | `src/lib/editor/frontmatter-decoration.ts` |
+| 300ms search debounce | OQ-GRID-001 | `GridView.svelte::debouncedSearch` |
+| Toast for error notification | OQ-006/Sprint 70 | `ToastContainer.svelte`, `stores.ts::addToast` |
+| Linux + macOS only | Design doc | Tauri targets GTK WebKitGTK + WKWebView |
+
+**Import Resolution Verification:**
+
+All cross-file imports resolve within the `src/` tree:
+- `$lib/*` → `src/lib/*` (via vite alias + tsconfig paths)
+- Components import from `../lib/` (types, api, stores, utils)
+- Editor modules import from `../` (debounce, frontmatter)
+- `@tauri-apps/api/core` → `invoke()` for IPC
+- `@tauri-apps/plugin-dialog` → directory picker in Settings
+- `@codemirror/*` → CM6 packages for editor setup
+- `svelte`, `svelte/store`, `svelte/transition` → Svelte runtime
+
+**Build Commands:**
+```bash
+# Install dependencies
+npm install
+
+# Dev mode (frontend + Tauri)
+npm run tauri dev
+
+# Production build
+npm run tauri build
+
+# Frontend only (for testing)
+npm run dev
