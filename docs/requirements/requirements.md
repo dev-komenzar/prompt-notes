@@ -2,6 +2,13 @@
 codd:
   node_id: "req:promptnotes-requirements"
   type: requirement
+  depended_by:
+  - id: governance:adr_tech_stack
+    relation: derives_from
+    semantic: governance
+  - id: test:acceptance_criteria
+    relation: derives_from
+    semantic: governance
 ---
 
 # PromptNotes — Requirements

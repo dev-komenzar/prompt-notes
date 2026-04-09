@@ -10,6 +10,15 @@ codd:
   - id: plan:implementation_plan
     relation: depends_on
     semantic: technical
+  - id: detail:editor_clipboard
+    relation: depends_on
+    semantic: technical
+  - id: detail:grid_search
+    relation: depends_on
+    semantic: technical
+  - id: detail:storage_fileformat
+    relation: depends_on
+    semantic: technical
   conventions:
   - targets:
     - module:shell

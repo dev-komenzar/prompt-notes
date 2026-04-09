@@ -10,6 +10,9 @@ codd:
   - id: plan:implementation_plan
     relation: depends_on
     semantic: technical
+  - id: detail:grid_search
+    relation: depends_on
+    semantic: technical
   conventions:
   - targets:
     - module:storage
