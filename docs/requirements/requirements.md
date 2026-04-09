@@ -127,3 +127,21 @@ macOS:   ~/Library/Application Support/promptnotes/notes/
 - タイトル
 - Markdownプレビュー（レンダリング）
 - モバイル対応
+
+---
+
+## Local Development
+
+- README.md を作成し、「## Local Development」セクションの中にローカルでの開発について手順をまとめる。
+- 環境構築はdirenv + nix flake
+
+---
+
+## ドキュメント整備
+
+- README.mdを作成。セクションは
+  - Download
+    - Nix
+    - homebrew
+  - Usage
+- Usageセクションはスクリーンショットつきで解説する。
