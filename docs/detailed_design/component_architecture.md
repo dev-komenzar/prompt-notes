@@ -31,322 +31,346 @@ codd:
 
 ## 1. Overview
 
-本設計書は PromptNotes アプリケーションのコンポーネント分割と、Tauri IPC 境界を中心としたモジュール間通信の詳細を定義する。PromptNotes は Tauri（Rust + WebView）上で動作するローカルファーストのプロンプトノートアプリであり、フロントエンドに **Svelte**、エディタエンジンに **CodeMirror 6** を採用する。データはローカルファイルシステム上の `.md` ファイルのみに保存し、データベース（SQLite・IndexedDB 等）やクラウド同期、AI 呼び出し機能は一切使用しない。対象プラットフォームは Linux（GTK WebKitGTK）および macOS（WKWebView）である。
+本設計書は、PromptNotes の Tauri v2 アーキテクチャにおけるコンポーネント構成と IPC 境界を詳細に定義する。PromptNotes は Svelte フロントエンド、Tauri IPC 層、Rust バックエンドの 3 層で構成され、すべてのファイルシステム操作は Rust バックエンド経由で実行される。フロントエンドからの直接ファイルシステムアクセスは設計上禁止されており、`invoke()` による `#[tauri::command]` 呼び出しのみが許可される通信手段である。
 
-アプリケーションは以下の5モジュールで構成される。
+本設計書は以下のリリース不可制約（Non-negotiable conventions）に準拠する。
 
-| モジュール | レイヤー | 責務 |
-|-----------|---------|------|
-| `module:shell` | Rust + Tauri ランタイム | アプリケーションウィンドウ管理、IPC コマンドルーティング、ライフサイクル管理 |
-| `module:storage` | Rust バックエンド | `.md` ファイルの CRUD、frontmatter パース、ファイル名タイムスタンプ生成、全文検索 |
-| `module:settings` | Rust バックエンド + Svelte UI | `config.json` の読み書き（保存ディレクトリ変更）。永続化は Rust 側で完結 |
-| `module:editor` | Svelte フロントエンド | CodeMirror 6 によるプレーンテキスト Markdown 編集、frontmatter デコレーション、自動保存、コピーボタン |
-| `module:grid` | Svelte フロントエンド | Pinterest スタイル Masonry カードレイアウト、直近7日間デフォルト表示、タグ/日付フィルタ、全文検索 |
+| 制約 ID | 対象 | 制約内容 | 本設計書での反映 |
+|---|---|---|---|
+| NNC-1 | `module:shell`, `framework:tauri` | Tauri IPC 境界を明確化し、フロントエンドからの直接ファイルシステムアクセスを禁止。全ファイル操作は Rust バックエンド経由。 | §2 の IPC 境界図、§3 の所有権定義、§4 の実装制約として全セクションに反映。Tauri の `fs` プラグインスコープは `deny` に設定し、WebView プロセスからの直接パスアクセスを遮断する。 |
+| NNC-2 | `module:storage`, `module:settings` | 設定変更（保存ディレクトリ）は Rust バックエンド経由で永続化。フロントエンド単独でのファイルパス操作は禁止。 | §3 で `module:settings` の永続化責務を Rust 側に限定。§4 で設定ファイルパス解決ロジックの Rust 側実装を義務付け。 |
 
-**リリース不可制約（Release-Blocking Constraints）への準拠:**
+対象プラットフォームは Linux および macOS であり、デフォルト保存ディレクトリは OS ごとに以下のとおり定義される。
 
-- **CONV-1（`framework:tauri`, `module:shell`）:** フロントエンド↔Rust バックエンド間の全通信は Tauri IPC（`invoke`）経由で行う。フロントエンドからの直接ファイルシステムアクセスは禁止する。全ファイル操作は Rust バックエンド経由で実行される。本設計書のすべての IPC コマンド定義はこの原則に基づく。
-- **CONV-2（`module:storage`, `module:settings`）:** 設定変更（保存ディレクトリ）は `set_config` IPC コマンドを通じて Rust バックエンドで永続化する。フロントエンド単独でのファイルパス操作・ファイルシステム読み書きは禁止する。設定画面のディレクトリ選択には Tauri のファイルダイアログ API を使用し、選択結果は Rust 側で検証・保存する。
+- **Linux**: `~/.local/share/promptnotes/notes/`
+- **macOS**: `~/Library/Application Support/promptnotes/notes/`
+
+データはローカル `.md` ファイルのみで管理し、クラウド同期・データベース（SQLite, Tantivy 等）・AI 呼び出し機能は一切実装しない。ネットワーク通信は設計上存在せず、すべてのデータはユーザーのローカルファイルシステムにのみ保存される。
 
 ## 2. Mermaid Diagrams
 
-### 2.1 コンポーネント構成とレイヤー境界
+### 2.1 コンポーネント構成と IPC 境界
 
 ```mermaid
 graph TB
-    subgraph OS["OS Layer (Linux GTK / macOS Cocoa)"]
-        FS["File System<br/>~/.local/share/promptnotes/ (Linux)<br/>~/Library/Application Support/promptnotes/ (macOS)"]
+    subgraph "フロントエンド層（WebView / Svelte）"
+        direction TB
+        Router["SvelteKit Router<br/>src/routes/"]
+        Editor["module:editor<br/>src/lib/components/editor/<br/>CodeMirror 6"]
+        Grid["module:grid<br/>src/lib/components/grid/<br/>Masonry レイアウト"]
+        Settings["module:settings<br/>src/lib/components/settings/"]
+        CopyBtn["コピーボタン<br/>Clipboard API"]
     end
 
-    subgraph TauriShell["module:shell — Tauri Runtime"]
-        subgraph RustBackend["Rust Backend"]
-            Storage["module:storage<br/>• create_note<br/>• save_note<br/>• read_note<br/>• delete_note<br/>• list_notes<br/>• search_notes"]
-            Settings["module:settings (backend)<br/>• get_config<br/>• set_config"]
-        end
-
-        subgraph WebView["WebView (Svelte SPA)"]
-            Editor["module:editor<br/>• CodeMirror 6<br/>• Auto-save (debounce 500ms)<br/>• Copy button<br/>• Cmd+N / Ctrl+N"]
-            Grid["module:grid<br/>• Masonry layout<br/>• 7-day default filter<br/>• Tag/Date filter<br/>• Full-text search"]
-            SettingsUI["module:settings (UI)<br/>• Directory picker<br/>• Config display"]
-        end
-
-        IPC["Tauri IPC (invoke)"]
+    subgraph "Tauri IPC 層"
+        direction TB
+        Invoke["invoke() コマンド呼び出し"]
+        Listen["listen() イベント受信"]
     end
 
-    Editor -->|invoke| IPC
-    Grid -->|invoke| IPC
-    SettingsUI -->|invoke| IPC
-    IPC --> Storage
-    IPC --> Settings
-    Storage --> FS
-    Settings --> FS
+    subgraph "バックエンド層（Rust）"
+        direction TB
+        Shell["module:shell<br/>src-tauri/src/main.rs<br/>src-tauri/src/lib.rs"]
+        StorageMod["module:storage<br/>src-tauri/src/storage/"]
+        SettingsMod["settings 永続化<br/>Tauri 標準設定パス（JSON）"]
+        Commands["#[tauri::command] ハンドラ群"]
+    end
+
+    FS["ローカルファイルシステム<br/>.md ファイル群"]
+
+    Router --> Editor
+    Router --> Grid
+    Router --> Settings
+    Editor --> CopyBtn
+
+    Editor -->|"save_note / read_note / create_note"| Invoke
+    Grid -->|"list_notes / search_notes / delete_note"| Invoke
+    Settings -->|"get_settings / update_settings"| Invoke
+
+    Invoke -->|"Tauri IPC"| Commands
+    Commands --> Shell
+    Commands --> StorageMod
+    Commands --> SettingsMod
+    Listen -.->|"イベント通知"| Editor
+    Listen -.->|"イベント通知"| Grid
+
+    StorageMod -->|"読み書き"| FS
+    SettingsMod -->|"JSON 読み書き"| FS
+
+    style Invoke fill:#ff9800,stroke:#e65100,color:#000
+    style Listen fill:#ff9800,stroke:#e65100,color:#000
 ```
 
-このダイアグラムは PromptNotes の全コンポーネントを2つのレイヤー（Rust バックエンドと Svelte フロントエンド）に分離し、その間に Tauri IPC 境界を明示している。
+**IPC 境界の意味**: オレンジで示された Tauri IPC 層が、フロントエンドとバックエンドの唯一の通信経路である。フロントエンド層のいかなるコンポーネントも、IPC 層を経由せずにファイルシステムへアクセスすることはできない。Tauri の `tauri.conf.json` において `fs` プラグインのスコープを制限し、WebView プロセスからの直接ファイルアクセスをブロックする。コピーボタンのみが例外的に Clipboard API（ブラウザ標準 API）を使用するが、これはファイルシステム操作ではない。
 
-**所有権と境界:**
+`module:shell` は Tauri `Builder` によるアプリ初期化と `#[tauri::command]` ハンドラ登録を所有し、すべての IPC エントリポイントの登録責務を持つ。新規コマンドの追加は必ず `module:shell` のハンドラ登録に反映する必要がある。
 
-- **`module:shell`** は Tauri ランタイム全体を所有し、ウィンドウ作成・IPC コマンドの登録とディスパッチ・アプリケーションライフサイクル（起動・終了）を管理する。Rust 側の `main.rs` がこのモジュールのエントリポイントである。
-- **`module:storage`** はすべてのファイル I/O 操作を排他的に所有する。ノートの CRUD、frontmatter パース（`serde_yaml`）、ファイル名タイムスタンプ生成（`chrono` クレート）、ファイル全走査検索はこのモジュール内でのみ実装される。フロントエンドモジュールがファイルシステムに直接触れることは一切ない。
-- **`module:settings`** はバックエンド（`config.json` 永続化）とフロントエンド（UI）にまたがるが、永続化ロジックは Rust バックエンドが単独所有する。フロントエンドの設定画面コンポーネントは表示とユーザー入力の受付のみを担い、パス検証やファイル書き込みは行わない。
-- **`module:editor`** と **`module:grid`** は Svelte フロントエンド内のコンポーネントであり、データ取得・永続化はすべて IPC 経由で `module:storage` に委譲する。
-
-### 2.2 IPC コマンドシーケンス
+### 2.2 IPC コマンドシーケンス（自動保存フロー）
 
 ```mermaid
 sequenceDiagram
-    participant User
-    participant SvelteEditor as module:editor<br/>(Svelte + CM6)
-    participant SvelteGrid as module:grid<br/>(Svelte)
-    participant SvelteSettings as module:settings<br/>(Svelte UI)
+    participant User as ユーザー
+    participant CM as CodeMirror 6
+    participant FE as Svelte フロントエンド
     participant IPC as Tauri IPC
-    participant RustStorage as module:storage<br/>(Rust)
-    participant RustConfig as module:settings<br/>(Rust backend)
-    participant FS as File System
+    participant RS as Rust バックエンド
+    participant FS as ファイルシステム
 
-    Note over User,FS: 新規ノート作成 (Cmd+N / Ctrl+N)
-    User->>SvelteEditor: Cmd+N / Ctrl+N
-    SvelteEditor->>IPC: invoke("create_note")
-    IPC->>RustStorage: create_note()
-    RustStorage->>FS: create YYYY-MM-DDTHHMMSS.md
-    FS-->>RustStorage: OK
-    RustStorage-->>IPC: { filename, path }
-    IPC-->>SvelteEditor: { filename, path }
-    SvelteEditor->>SvelteEditor: Load empty template in CM6, focus body
+    User->>CM: テキスト編集
+    CM->>FE: 変更イベント発火
+    FE->>FE: デバウンス（500ms〜1000ms）
 
-    Note over User,FS: 自動保存 (debounce 500ms)
-    User->>SvelteEditor: Type text
-    SvelteEditor->>SvelteEditor: EditorView.updateListener → debounce 500ms
-    SvelteEditor->>IPC: invoke("save_note", { filename, content })
-    IPC->>RustStorage: save_note(filename, content)
-    RustStorage->>FS: write file
-    FS-->>RustStorage: OK
-    RustStorage-->>IPC: void
+    alt デバウンス中に追加編集
+        User->>CM: 追加テキスト編集
+        CM->>FE: 変更イベント発火
+        FE->>FE: デバウンスタイマーリセット
+    end
 
-    Note over User,FS: グリッドビュー表示（直近7日間）
-    User->>SvelteGrid: Open grid view
-    SvelteGrid->>IPC: invoke("list_notes", { from_date: 7日前, to_date: 今日 })
-    IPC->>RustStorage: list_notes(from_date, to_date)
-    RustStorage->>FS: scan *.md, parse frontmatter
-    FS-->>RustStorage: file list
-    RustStorage-->>IPC: NoteEntry[]
-    IPC-->>SvelteGrid: NoteEntry[]
-    SvelteGrid->>SvelteGrid: Render Masonry cards
-
-    Note over User,FS: 設定変更（保存ディレクトリ）
-    User->>SvelteSettings: Click directory picker
-    SvelteSettings->>IPC: Tauri dialog API (open directory)
-    IPC-->>SvelteSettings: selected path
-    SvelteSettings->>IPC: invoke("set_config", { notes_dir })
-    IPC->>RustConfig: set_config(notes_dir)
-    RustConfig->>FS: write config.json
-    FS-->>RustConfig: OK
-    RustConfig-->>IPC: void
+    FE->>IPC: invoke('save_note', {filename, frontmatter, body})
+    IPC->>RS: save_note コマンド実行
+    RS->>FS: 一時ファイル書き込み
+    RS->>FS: rename（アトミック書き込み）
+    FS-->>RS: 書き込み完了
+    RS-->>IPC: {success: true}
+    IPC-->>FE: 結果返却
 ```
 
-このシーケンス図は主要な4つのユーザーフローにおける IPC 通信の流れを示す。
+**所有権と境界**: 自動保存のデバウンスロジックはフロントエンド（`module:editor`）が所有する。ファイルのアトミック書き込み（一時ファイル → rename）は `module:storage`（Rust 側）が所有する。フロントエンドは保存先パスの解決に一切関与せず、`filename` のみを指定する。パスの組み立て（保存ディレクトリ + filename）は Rust バックエンドが `module:storage` 内部で行う。
 
-**実装境界の注記:**
+### 2.3 新規ノート作成シーケンス
 
-- **新規ノート作成:** ファイル名（`YYYY-MM-DDTHHMMSS.md`）の生成は `module:storage`（Rust 側、`chrono` クレート使用）が排他的に行う。フロントエンドはファイル名を生成せず、`create_note` の戻り値として受け取る。
-- **自動保存:** デバウンスタイマー（500ms）の管理は `module:editor`（Svelte 側）が担う。CodeMirror の `EditorView.updateListener` で変更を検知し、デバウンス後に `save_note` を呼び出す。Rust 側はステートレスな上書き保存のみを行う。
-- **グリッドビュー:** 日付フィルタの起算（直近7日間）は Svelte 側で `from_date` / `to_date` を算出し、Rust 側に渡す。Rust 側はファイル名タイムスタンプとの比較フィルタリングおよび frontmatter パースを行い、`NoteEntry[]` を返却する。
-- **設定変更:** ディレクトリ選択ダイアログは Tauri API（`@tauri-apps/api/dialog`）を利用する。選択されたパスは `set_config` IPC コマンドで Rust バックエンドに送信され、`config.json` への書き込みは Rust 側で完結する。フロントエンドが直接 `config.json` に触れることは禁止される。
+```mermaid
+sequenceDiagram
+    participant User as ユーザー
+    participant FE as Svelte フロントエンド
+    participant IPC as Tauri IPC
+    participant RS as Rust バックエンド（module:storage）
+    participant FS as ファイルシステム
 
-### 2.3 モジュール依存関係
+    User->>FE: Cmd+N / Ctrl+N
+    FE->>IPC: invoke('create_note')
+    IPC->>RS: create_note コマンド実行
+    RS->>RS: 現在時刻から YYYY-MM-DDTHHMMSS.md 生成
+    RS->>FS: 空の .md ファイル作成（frontmatter テンプレート付き）
+    FS-->>RS: 作成完了
+    RS-->>IPC: {filename, path}
+    IPC-->>FE: 結果返却
+    FE->>FE: /edit/:filename へルーティング遷移
+    FE->>FE: CodeMirror 6 にフォーカス移動
+```
+
+**実装境界**: ファイル名の生成ロジック（`YYYY-MM-DDTHHMMSS.md` 形式）は `module:storage` の Rust コードが単独で所有する。フロントエンドはファイル名を生成せず、`create_note` コマンドの戻り値として受け取った `filename` をルーティングパラメータとして使用するのみである。
+
+### 2.4 コンポーネント依存関係
 
 ```mermaid
 graph LR
-    subgraph Frontend["Svelte Frontend (WebView)"]
-        E["module:editor"]
-        G["module:grid"]
-        SU["module:settings UI"]
+    subgraph "Svelte コンポーネント"
+        EditorPage["routes/edit/[filename]"]
+        GridPage["routes/ (index)"]
+        SettingsPage["routes/settings"]
+        NewPage["routes/new"]
+        EditorComp["components/editor/*"]
+        GridComp["components/grid/*"]
+        SettingsComp["components/settings/*"]
     end
 
-    subgraph Backend["Rust Backend"]
-        SH["module:shell"]
-        ST["module:storage"]
-        SC["module:settings backend"]
+    subgraph "Rust モジュール"
+        ShellMain["shell::main"]
+        StorageCore["storage::core"]
+        StorageSearch["storage::search"]
+        SettingsStore["settings::store"]
     end
 
-    E -->|"invoke: create_note, save_note, read_note, delete_note"| SH
-    G -->|"invoke: list_notes, search_notes"| SH
-    SU -->|"invoke: get_config, set_config"| SH
-    SH -->|dispatch| ST
-    SH -->|dispatch| SC
-    ST -->|"std::fs"| FS["File System (.md)"]
-    SC -->|"std::fs"| CF["config.json"]
+    EditorPage --> EditorComp
+    GridPage --> GridComp
+    SettingsPage --> SettingsComp
+    NewPage -->|"リダイレクト"| EditorPage
+
+    EditorComp -->|"create_note, save_note, read_note"| ShellMain
+    GridComp -->|"list_notes, search_notes, delete_note"| ShellMain
+    SettingsComp -->|"get_settings, update_settings"| ShellMain
+
+    ShellMain --> StorageCore
+    ShellMain --> StorageSearch
+    ShellMain --> SettingsStore
+
+    StorageCore -->|"ファイル CRUD"| StorageSearch
 ```
 
-`module:shell` は IPC コマンドのディスパッチャーとして機能し、フロントエンドの全モジュールからの `invoke` 呼び出しを受け付けて、適切なバックエンドモジュール（`module:storage` または `module:settings`）にルーティングする。フロントエンドモジュール間に直接の依存関係はなく、各画面コンポーネントは独立して IPC を呼び出す。
+**モジュール境界の意味**: `ShellMain`（`module:shell`）はすべての IPC コマンドのディスパッチャとして機能し、個別の Rust モジュールへ処理を委譲する。フロントエンドの各コンポーネントは、対応する Rust モジュールの存在を知らず、コマンド名と引数の型のみを把握する。この境界により、Rust 側の内部リファクタリングがフロントエンドに影響を与えない。
 
 ## 3. Ownership Boundaries
 
 ### 3.1 モジュール所有権マトリクス
 
-| 資源 / 関心事 | 排他的所有者 | 利用者 | 制約 |
-|--------------|------------|-------|------|
-| `.md` ファイル CRUD | `module:storage` | `module:editor`, `module:grid` via IPC | フロントエンドからの直接アクセス禁止 |
-| ファイル名生成（`YYYY-MM-DDTHHMMSS.md`） | `module:storage` | `module:editor`（戻り値として受領） | `chrono` クレートによるタイムスタンプ生成は Rust 側のみ |
-| frontmatter パース（`serde_yaml`） | `module:storage` | `module:grid`（`NoteEntry.tags` として受領） | YAML デシリアライズは Rust 側のみ |
-| 全文検索ロジック | `module:storage` | `module:grid` via IPC | `str::contains`（大文字小文字非区別）による走査は Rust 側のみ |
-| `config.json` 読み書き | `module:settings`（Rust） | `module:settings`（Svelte UI）via IPC | フロントエンド単独でのファイルパス操作禁止 |
-| IPC コマンド登録・ディスパッチ | `module:shell` | 全フロントエンドモジュール | `#[tauri::command]` マクロで公開、`invoke` で呼び出し |
-| CodeMirror 6 インスタンス管理 | `module:editor` | なし | `EditorView` の生成・破棄・状態管理は `module:editor` Svelte コンポーネント内で完結 |
-| デバウンスタイマー（自動保存 500ms） | `module:editor` | なし | JavaScript 側で `setTimeout` / `clearTimeout` で管理 |
-| Masonry カードレイアウト | `module:grid` | なし | CSS Columns またはライブラリによる実装。`module:editor` とは独立 |
-| ウィンドウ管理・ライフサイクル | `module:shell` | なし | Tauri `Builder` の設定、ウィンドウ作成、アプリ終了処理 |
+| モジュール | 配置 | 所有する責務 | 禁止事項 |
+|---|---|---|---|
+| `module:shell` | `src-tauri/src/main.rs`, `src-tauri/src/lib.rs` | Tauri Builder 初期化、`#[tauri::command]` ハンドラ登録、ウィンドウ管理、グローバルキーボードショートカットのフォワーディング | ビジネスロジックの直接実装（ストレージ操作、検索ロジック等を shell 内に書かない） |
+| `module:editor` | `src/lib/components/editor/` | CodeMirror 6 インスタンス管理、タグ入力 UI、コピーボタン、自動保存デバウンスロジック、`Cmd+N`/`Ctrl+N` キーバインド処理 | タイトル入力欄の設置、Markdown レンダリング（HTML 要素生成）、直接ファイルシステムアクセス、ファイル名の生成 |
+| `module:grid` | `src/lib/components/grid/` | Masonry レイアウト、フィルタリング UI（日付/タグ/全文検索）、カードクリックによるエディタ遷移 | ファイル走査ロジックの実装（検索は Rust 側 `search_notes` コマンドに委譲）、直接ファイルシステムアクセス |
+| `module:storage` | `src-tauri/src/storage/` | `.md` ファイル CRUD、ファイル名生成（`YYYY-MM-DDTHHMMSS.md`）、frontmatter パース/シリアライズ、全文検索（ファイル全走査）、アトミック書き込み、パス解決 | SQLite・Tantivy 等データベース/インデックスエンジンの利用、ネットワーク通信、`tags` 以外のメタデータフィールドの自動挿入 |
+| `module:settings` | `src/lib/components/settings/`（UI）+ Rust 側永続化ロジック | 保存ディレクトリパスの変更 UI 提供 | フロントエンド単独での設定ファイル書き込み、フロントエンド単独でのファイルパス解決 |
 
-### 3.2 共有型定義の所有権
+### 3.2 共有型の所有権
 
-フロントエンド・バックエンド間で共有される型は IPC 境界で JSON シリアライズされるため、両側で同等の型定義が必要になる。
+IPC コマンドの引数・戻り値に使用される型は、フロントエンドと Rust バックエンドの双方で定義が必要になる。所有権の混乱を防ぐため、以下のルールを適用する。
 
-| 型 | Rust 側所有ファイル | TypeScript 側定義場所 | 正の方向 |
-|----|-------------------|---------------------|---------|
-| `NoteEntry` | `module:storage` 内の `models.rs` | `src/lib/types.ts` | Rust → TypeScript（Rust 側が正。TS 側は IPC レスポンスの型注釈） |
-| `Config` | `module:settings` 内の `config.rs` | `src/lib/types.ts` | Rust → TypeScript |
-| IPC コマンド引数 | 各 `#[tauri::command]` 関数の引数型 | `src/lib/api.ts`（invoke ラッパー） | Rust → TypeScript |
+| 共有型 | 正規の所有者 | フロントエンド側の扱い |
+|---|---|---|
+| `NoteMetadata` | `module:storage`（Rust 側 `src-tauri/src/storage/` 内の `struct NoteMetadata`） | TypeScript 型定義 `src/lib/types/note.ts` に手動ミラーリング。Rust 側の構造体変更時にフロントエンド型を同期更新する。 |
+| IPC コマンド引数/戻り値型 | 各コマンドを実装する Rust モジュール | `src/lib/types/commands.ts` に TypeScript 型を手動定義。 |
+| 設定型（`Settings`） | Rust 側設定管理ロジック | `src/lib/types/settings.ts` に TypeScript 型を手動定義。 |
 
-**再実装ドリフト防止:** Rust 側の `serde::Serialize` / `serde::Deserialize` 導出が正（canonical）であり、TypeScript 側の型定義は Rust 側に追従する。型の不一致を検出するため、CI で IPC コマンドの結合テスト（Rust バックエンド + Svelte フロントエンドの E2E）を実行する。
+**単一所有者の原則**: `NoteMetadata` の構造体定義は `module:storage` の Rust コード内に 1 箇所のみ存在する。フロントエンドの TypeScript 型はミラーであり、正規定義ではない。フィールド追加・変更は Rust 側で行い、フロントエンドはそれに追随する。
 
-### 3.3 IPC コマンド境界の詳細
+### 3.3 ファイルパス解決の所有権
 
-| コマンド名 | 所有モジュール | 引数 | 戻り値 | フロントエンド呼び出し元 |
-|-----------|--------------|------|--------|----------------------|
-| `create_note` | `module:storage` | なし | `{ filename: string, path: string }` | `module:editor` |
-| `save_note` | `module:storage` | `{ filename: string, content: string }` | `void` | `module:editor` |
-| `read_note` | `module:storage` | `{ filename: string }` | `{ content: string }` | `module:editor` |
-| `delete_note` | `module:storage` | `{ filename: string }` | `void` | `module:editor`, `module:grid` |
-| `list_notes` | `module:storage` | `{ from_date?: string, to_date?: string, tag?: string }` | `NoteEntry[]` | `module:grid` |
-| `search_notes` | `module:storage` | `{ query: string, from_date?: string, to_date?: string, tag?: string }` | `NoteEntry[]` | `module:grid` |
-| `get_config` | `module:settings` | なし | `Config` | `module:settings` UI |
-| `set_config` | `module:settings` | `{ notes_dir: string }` | `void` | `module:settings` UI |
+ファイルパスの解決（保存ディレクトリ + ファイル名の結合、OS 別デフォルトパスの決定）は `module:storage` が排他的に所有する。
 
-### 3.4 フロントエンド内部のコンポーネント構成
+- フロントエンドは `filename`（例: `2026-04-04T143205.md`）のみを扱い、フルパスを知らない。
+- 設定画面（`module:settings`）でユーザーが保存ディレクトリを変更する場合、フロントエンドは新しいパス文字列を `update_settings` コマンド経由で Rust 側に送信する。パスのバリデーション（ディレクトリ存在確認、書き込み権限確認）は Rust 側で実行する。
+- フロントエンドが `window.__TAURI__` や Tauri の `fs` プラグインを直接使用してファイルパスを操作することは禁止される。
 
-Svelte SPA 内の画面遷移は SPA ルーティングライブラリを使用せず、状態変数による条件レンダリングで実現する（3画面のみのため十分）。
+### 3.4 設定永続化の所有権
 
-```
-src/
-├── App.svelte              # ルートコンポーネント。currentView 状態で画面切替
-├── lib/
-│   ├── api.ts              # invoke ラッパー。全 IPC コマンドの型安全な呼び出し関数
-│   ├── types.ts            # NoteEntry, Config 等の TypeScript 型定義
-│   └── debounce.ts         # デバウンスユーティリティ（自動保存用）
-├── components/
-│   ├── Editor.svelte       # module:editor — CodeMirror 6 統合
-│   ├── GridView.svelte     # module:grid — Masonry カードレイアウト
-│   ├── Settings.svelte     # module:settings UI — ディレクトリ選択
-│   ├── NoteCard.svelte     # グリッドビュー用個別カードコンポーネント
-│   ├── TagFilter.svelte    # タグフィルタ UI
-│   ├── DateFilter.svelte   # 日付フィルタ UI
-│   └── CopyButton.svelte   # 1クリックコピーボタン
-```
+設定値（`notes_dir` 等）の永続化は Rust バックエンド側のロジックが所有する。
 
-`lib/api.ts` が IPC 呼び出しの単一エントリポイントとなり、各 Svelte コンポーネントは `api.ts` の関数を通じてバックエンドと通信する。`@tauri-apps/api` の `invoke` を直接呼び出すコードは `api.ts` 内にのみ存在させ、コンポーネント側での直接 `invoke` 呼び出しを避ける。
+- 設定ファイルは Tauri の標準設定ファイルパスに JSON 形式で保存される。
+  - Linux: `~/.config/promptnotes/config.json`
+  - macOS: `~/Library/Application Support/promptnotes/config.json`
+- フロントエンド（`module:settings` コンポーネント）は UI の提供と `get_settings` / `update_settings` コマンドの呼び出しのみを行い、設定ファイルの読み書きには一切関与しない。
 
 ## 4. Implementation Implications
 
-### 4.1 Tauri IPC セキュリティ境界
+### 4.1 Tauri IPC セキュリティ設定
 
-Tauri の IPC 境界は本アプリケーションのセキュリティモデルの中核である。
+`tauri.conf.json` の権限設定において、以下を強制する。
 
-- **フロントエンドからの直接ファイルシステムアクセス禁止（CONV-1 準拠）:** Tauri の `allowlist` 設定で `fs` スコープを制限し、WebView からの直接ファイルアクセスを遮断する。全ファイル操作は `#[tauri::command]` で公開された IPC コマンド経由でのみ実行可能とする。
-- **パストラバーサル防止:** `save_note` / `read_note` / `delete_note` コマンドの `filename` 引数に対して、Rust 側で `..` や `/` を含むパスを拒否するバリデーションを実装する。ファイル名は `YYYY-MM-DDTHHMMSS.md` パターンに厳密に一致するもののみ許可する。
-- **設定変更のサーバーサイド検証（CONV-2 準拠）:** `set_config` コマンドで渡された `notes_dir` パスは Rust 側で存在チェック・書き込み権限チェックを行った後に `config.json` に書き込む。
+- **`fs` プラグイン**: WebView からの直接ファイルアクセスを `deny` に設定。すべてのファイル操作は `#[tauri::command]` ハンドラ経由とする。
+- **`shell` プラグイン**: 外部プロセス起動を `deny` に設定。
+- **`http` プラグイン**: ネットワーク通信を `deny` に設定。PromptNotes はネットワーク通信を一切行わない（プライバシー制約）。
+- **`clipboard-manager` プラグイン**: コピーボタンの実装に必要なため `allow` に設定。ただし、Clipboard API（ブラウザ標準）で代替可能であれば Tauri プラグインは不使用とする。
 
-### 4.2 自動保存のデバウンス実装
+この設定により、NNC-1（フロントエンドからの直接ファイルシステムアクセス禁止）が技術的に強制される。
 
-`module:editor` 内の自動保存フローは以下のように実装する。
+### 4.2 IPC コマンド実装パターン
 
-1. CodeMirror の `EditorView.updateListener` エクステンションを登録し、`docChanged` フラグが `true` の `ViewUpdate` を検知する。
-2. 変更検知後、JavaScript 側で 500ms のデバウンスタイマーを起動する。タイマー未消化時に新たな変更が発生した場合はタイマーをリセットする。
-3. デバウンスタイマー消化後、`api.ts` の `saveNote(filename, content)` を呼び出し、IPC 経由で Rust バックエンドにコンテンツを送信する。
-4. Rust 側は `std::fs::write` で指定ファイルを上書き保存する。
+すべてのコマンドは以下の統一パターンで実装する。
 
-ユーザーの明示的な「保存」操作（Cmd+S 等）は不要であり、UI 上に保存ボタンは配置しない。
+```rust
+// src-tauri/src/commands/note_commands.rs
+#[tauri::command]
+pub async fn save_note(
+    filename: String,
+    frontmatter: Frontmatter,
+    body: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<SaveResult, String> {
+    let storage = state.storage.lock().await;
+    storage.save(&filename, &frontmatter, &body)
+        .map_err(|e| e.to_string())
+}
+```
 
-### 4.3 CodeMirror 6 と Svelte の統合
+- **エラーハンドリング**: Rust 側のエラーは `Result<T, String>` で返却し、フロントエンドで `try/catch` する。
+- **状態管理**: `tauri::State<AppState>` を介してストレージや設定の状態を共有する。`AppState` は `module:shell` の初期化時に `manage()` で登録する。
+- **非同期処理**: ファイル I/O を含むコマンドは `async` で定義し、Tauri のスレッドプールで実行する。WebView スレッドをブロックしない。
 
-`Editor.svelte` コンポーネント内で CodeMirror 6 を統合する際の実装方針:
+### 4.3 コマンドハンドラ登録（module:shell）
 
-- `onMount` ライフサイクルフックで `EditorView` インスタンスを生成し、コンポーネント内の DOM 要素にマウントする。
-- `onDestroy` で `EditorView.destroy()` を呼び出してリソースを解放する。
-- Markdown シンタックスハイライトは `@codemirror/lang-markdown` パッケージを使用する。
-- frontmatter 領域のカスタムデコレーション（背景色変更）は `ViewPlugin` または `StateField` + `Decoration` で実装する（OQ-002 で最終判断）。
-- キーマップに `Cmd-n`（macOS）/ `Ctrl-n`（Linux）を登録し、`create_note` IPC コマンドを呼び出す。
-- タイトル入力欄は一切設けない。Markdown プレビュー（HTML レンダリング）機能は実装しない。これらが存在する場合リリース不可。
+`module:shell` の `main.rs` でハンドラを一括登録する。
 
-### 4.4 グリッドビューの実装
+```rust
+fn main() {
+    tauri::Builder::default()
+        .manage(AppState::new())
+        .invoke_handler(tauri::generate_handler![
+            create_note,
+            save_note,
+            read_note,
+            list_notes,
+            search_notes,
+            delete_note,
+            get_settings,
+            update_settings,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
+```
 
-`GridView.svelte` コンポーネントの実装方針:
+新規コマンドの追加時は、`generate_handler!` マクロへの追加と、対応する TypeScript 型定義の追加を同時に行う。
 
-- **デフォルトフィルタ:** コンポーネントマウント時に現在日時から7日前を算出し、`list_notes({ from_date, to_date })` を呼び出す。
-- **Masonry レイアウト:** CSS Columns または JavaScript ライブラリ（svelte-masonry 等）で Pinterest スタイルの可変高カードレイアウトを実現する（OQ-003 で最終判断。WebKitGTK / WKWebView の CSS Masonry サポート状況に依存）。
-- **タグフィルタ:** `TagFilter.svelte` コンポーネントでタグ選択 UI を提供し、選択タグを `list_notes` の `tag` パラメータに渡す。
-- **日付フィルタ:** `DateFilter.svelte` コンポーネントで日付範囲指定 UI を提供する。
-- **全文検索:** 検索テキストボックスの入力を `search_notes` コマンドに渡し、Rust 側のファイル全走査で結果を取得する。
-- **カードクリック:** `NoteCard.svelte` のクリックイベントで `currentView` 状態をエディタ画面に切り替え、対象ノートの `filename` を `read_note` 経由で読み込む。
+### 4.4 フロントエンド IPC 呼び出し層
 
-### 4.5 ストレージ層の Rust 実装
+フロントエンドからの IPC 呼び出しは `src/lib/api/` ディレクトリに集約し、各 Svelte コンポーネントが `@tauri-apps/api/core` の `invoke()` を直接呼び出すことを避ける。
 
-`module:storage` の Rust 実装における主要な技術選定:
+```
+src/lib/api/
+├── notes.ts      # create_note, save_note, read_note, list_notes, search_notes, delete_note
+└── settings.ts   # get_settings, update_settings
+```
 
-| 処理 | ライブラリ / 手法 | 備考 |
-|------|-----------------|------|
-| ファイル I/O | `std::fs` | `read_to_string`, `write`, `create_dir_all`, `read_dir` |
-| タイムスタンプ生成 | `chrono` クレート | `Local::now().format("%Y-%m-%dT%H%M%S")` |
-| frontmatter パース | `serde_yaml` クレート | `---` デリミタ検出後、YAML 部分をデシリアライズ |
-| デフォルトディレクトリ取得 | `dirs` クレート | `dirs::data_dir()` → Linux: `~/.local/share/`, macOS: `~/Library/Application Support/` |
-| JSON 設定ファイル | `serde_json` クレート | `config.json` のシリアライズ / デシリアライズ |
-| 全文検索 | `str::contains`（大文字小文字非区別） | インデックスエンジンなし。5,000 件超過時に Tantivy 導入を検討 |
+この抽象層により、IPC コマンド名の変更がコンポーネント全体に波及することを防ぐ。
 
-### 4.6 設定管理フロー（CONV-2 準拠）
+### 4.5 アトミック書き込みの実装
 
-設定画面（`Settings.svelte`）におけるディレクトリ変更フロー:
+`module:storage` の `save_note` 実装において、データ破損を防ぐためにアトミック書き込みを採用する。
 
-1. ユーザーが「ディレクトリ選択」ボタンをクリックする。
-2. Tauri のファイルダイアログ API（`@tauri-apps/api/dialog` の `open({ directory: true })`）でネイティブディレクトリ選択ダイアログを表示する。
-3. ユーザーがディレクトリを選択すると、選択されたパスを `api.ts` の `setConfig({ notes_dir })` 経由で Rust バックエンドに送信する。
-4. Rust 側でパスの存在チェック・書き込み権限チェックを実行し、成功時に `config.json` を更新する。
-5. 設定変更後、新規ノートは新しいディレクトリに保存される。既存ノートの自動移動は行わない。
+1. 保存ディレクトリ内に一時ファイル（例: `.2026-04-04T143205.md.tmp`）を作成し、内容を書き込む。
+2. `std::fs::rename()` で一時ファイルを正式ファイル名にアトミックに置換する。
+3. Linux・macOS の両プラットフォームで、同一ファイルシステム上の `rename` はアトミック操作であることを前提とする。
 
-フロントエンド側で `notes_dir` のパス文字列を直接ファイルシステムに書き込む操作は禁止される。パスの検証・永続化は Rust バックエンドが排他的に行う。
+### 4.6 全文検索の実装制約
 
-### 4.7 プラットフォーム固有の考慮事項
+`search_notes` コマンドはファイル全走査方式で実装する。
 
-| 項目 | Linux (GTK WebKitGTK) | macOS (WKWebView) |
-|------|----------------------|-------------------|
-| デフォルト保存ディレクトリ | `~/.local/share/promptnotes/notes/` | `~/Library/Application Support/promptnotes/notes/` |
-| 設定ファイルパス | `~/.local/share/promptnotes/config.json` | `~/Library/Application Support/promptnotes/config.json` |
-| 新規ノートキーバインド | `Ctrl+N` | `Cmd+N` |
-| コピーボタン（代替キーバインド想定） | `Ctrl+C` (OS 標準) | `Cmd+C` (OS 標準) |
-| 配布形式 | `.AppImage`, `.deb`, Flatpak (Flathub), NixOS パッケージ | `.dmg`, Homebrew Cask |
+- 検索対象: 保存ディレクトリ内の全 `.md` ファイルの本文部分（frontmatter を除く）。
+- 性能目標: 直近 7 日間のノート（数十件規模）に対して **100ms 以内**で応答。
+- インデックスエンジン（Tantivy, SQLite FTS 等）は現時点では導入しない。件数が数千件規模に達し体感遅延が発生した場合に、ADR FU-002 として導入判断を行う。
 
-### 4.8 パフォーマンス特性
+### 4.7 フロントエンドルーティングと画面遷移
 
-- **ファイル全走査検索:** 想定ノート件数は1週間あたり数十件、蓄積が進んでも数百〜数千件規模。この規模ではファイル全走査（`std::fs::read_to_string` + `str::contains`）で実用的な応答速度が得られる。5,000 件超過時に応答時間を計測し、Tantivy 等のインデックスエンジン導入を検討する。
-- **自動保存レイテンシ:** デバウンス 500ms + IPC オーバーヘッド + `std::fs::write` のレイテンシ。ローカルファイルシステムへの書き込みであるため、通常は数ミリ秒以内に完了する。
-- **新規ノート作成:** `Cmd+N` / `Ctrl+N` からフォーカス移動完了まで体感上の遅延がないこと。ファイル生成（`chrono` + `std::fs::File::create`）は 1ms 以下で完了する想定。
+SvelteKit のファイルベースルーティングで以下のルートを定義する。
 
-### 4.9 スコープ外（実装禁止）の明示
+| パス | 画面 | IPC コマンド依存 |
+|---|---|---|
+| `/` | グリッドビュー | `list_notes`, `search_notes`, `delete_note` |
+| `/edit/:filename` | エディタ画面 | `read_note`, `save_note`, `create_note` |
+| `/new` | 新規ノート（即座にリダイレクト） | `create_note` |
+| `/settings` | 設定画面 | `get_settings`, `update_settings` |
 
-以下の機能はアーキテクチャレベルで禁止されており、IPC コマンドの追加・フロントエンドモジュールの追加を含め、実装された場合リリース不可となる。
+`/new` ルートは `create_note` コマンドを発行し、戻り値の `filename` を用いて `/edit/:filename` に即座にリダイレクトする。独立した画面は持たない。
 
-- AI 呼び出し機能（LLM API コール、チャット UI、プロンプト送信）
-- クラウド同期（リモートサーバーへのデータ送信・同期）
-- データベース利用（SQLite・IndexedDB・PostgreSQL 等）
-- タイトル入力欄（エディタ画面）
-- Markdown プレビュー / HTML レンダリング
-- Windows ビルド・配布（将来対応。現時点ではスコープ外）
-- モバイル対応（iOS / Android）
+### 4.8 CodeMirror 6 の統合制約
+
+- エディタエンジンは CodeMirror 6 に固定（変更不可）。
+- Markdown シンタックスハイライトには `@codemirror/lang-markdown` パッケージを使用する。
+- Markdown レンダリング（`<h1>`, `<strong>` 等の HTML 要素生成）は禁止。プレーンテキスト表示のみ。
+- タイトル入力欄（`<input>` / `<textarea>`）の設置は禁止。
+
+### 4.9 テスト戦略における IPC 境界の検証
+
+Playwright による E2E テスト（`tests/e2e/` 配下）において、以下の IPC 境界違反を検出するテストケースを含める。
+
+| テストケース | 検証内容 | 対応するスコープガード |
+|---|---|---|
+| `scope-guard.browser.spec.ts` | 外部 API 呼び出し（`fetch`, `XMLHttpRequest`）の不在 | ネットワーク通信禁止 |
+| DOM 検証 | タイトル専用 `input` / `textarea` の不在 | タイトル入力欄禁止 |
+| DOM 検証 | レンダリング済み HTML 要素（`<h1>`, `<strong>` 等）が本文領域に存在しない | Markdown レンダリング禁止 |
+
+### 4.10 ビルド・配布パイプライン
+
+GitHub Actions で Linux（`.deb`, `.AppImage`, Flatpak, NixOS パッケージ）および macOS（`.dmg`, Homebrew Cask）向けのビルドを実行する。開発環境は `direnv` + `nix flake` で統一し、`direnv allow` 後に Rust ツールチェイン、Node.js、Tauri CLI がすべて利用可能になる。開発サーバーは `tauri dev`（`http://localhost:1420`）で起動する。
 
 ## 5. Open Questions
 
-| ID | 対象モジュール | 質問 | 判断時期 |
-|----|--------------|------|---------|
-| OQ-002 | `module:editor` | CodeMirror 6 の frontmatter カスタムデコレーション（背景色変更）を `ViewPlugin` で実装するか `StateField` + `Decoration` で実装するか。Svelte コンポーネントとの統合パターンによって最適解が異なる。 | 開発着手時の技術検証（プロトタイプ）で決定 |
-| OQ-003 | `module:grid` | Masonry レイアウトを CSS Columns で実装するか、JavaScript ライブラリ（svelte-masonry 等）で実装するか。CSS Grid の `grid-template-rows: masonry` は Firefox のみ実験的サポートであり、WebKitGTK / WKWebView での対応状況を確認する必要がある。 | WebKitGTK / WKWebView のサポート状況調査後に決定 |
-| OQ-004 | `module:editor` | 自動保存のデバウンス間隔を 500ms とするか、より長い間隔（1000ms 等）とするか。体感の即時性とファイル I/O 頻度のバランスを検証する。 | プロトタイプでのユーザーテスト後に決定 |
-| OQ-005 | `module:shell` | Tauri v2 の安定版リリース状況に応じて v1 と v2 のいずれをベースにするか。v2 では IPC モデル（permissions ベース）とセキュリティモデルが変更されており、`allowlist` 設定方式が異なる。 | 開発開始時点の Tauri 安定版に基づいて決定 |
-| OQ-006 | `module:storage`, `module:editor` | `api.ts` の IPC ラッパー関数にエラーハンドリング（ファイル書き込み失敗、ディレクトリ不存在等）のユーザー通知方式。トースト通知、インライン表示、またはダイアログのいずれを採用するか。 | UI プロトタイプ時に決定 |
+| ID | 質問 | 影響モジュール | 解決トリガー |
+|---|---|---|---|
+| OQ-CA-001 | 自動保存のデバウンス時間を 500ms と 1000ms のどちらに設定するか。タイピング中のディスク I/O 頻度と保存漏れリスクのトレードオフを評価する必要がある。 | `module:editor` | ユーザーテスト実施時に体感フィードバックを収集して決定 |
+| OQ-CA-002 | フロントエンド IPC 呼び出し層（`src/lib/api/`）で TypeScript の型を Rust 側の構造体と自動同期する仕組み（例: `ts-rs` クレートによる自動生成）を導入するか、手動ミラーリングで運用するか。 | `module:shell`, `module:storage` | 初回実装完了後、型の乖離が問題になった時点 |
+| OQ-CA-003 | 設定画面で保存ディレクトリを変更した場合、既存ノートの移動を行うか、新規ノートのみ新ディレクトリに作成するか。Rust 側のパス解決ロジックと `list_notes` の走査対象ディレクトリに影響する。 | `module:settings`, `module:storage` | 詳細設計レビュー時 |
+| OQ-CA-004 | `NoteMetadata.body_preview` の文字数上限をいくつにするか。グリッドビューの Masonry レイアウトにおけるカード高さの算出に影響する。 | `module:grid`, `module:storage` | UI プロトタイプ作成時 |
+| OQ-CA-005 | ノート削除機能の UI 配置（エディタ画面内メニュー、グリッドビューのコンテキストメニュー、または両方）。`delete_note` コマンドの呼び出し元が変わるため、IPC 呼び出し層の設計に影響する。 | `module:editor`, `module:grid` | UI 設計レビュー時 |
+| OQ-CA-006 | ノート件数が数千件規模に達した場合の全文検索応答時間が 100ms を超える可能性について、Tantivy 等の Rust ネイティブ全文検索エンジン導入をどの時点で判断するか。 | `module:storage`, `module:grid` | 全走査で体感遅延が発生した時点（ADR FU-002） |
