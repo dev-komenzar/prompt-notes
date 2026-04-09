@@ -1,3 +1,7 @@
+## 基本的な開発手法
+
+[CoDD](https://github.com/yohey-w/codd-dev/blob/main/README.md)を利用している。
+
 ## コミット
 
 ### コミットメッセージのテンプレート
