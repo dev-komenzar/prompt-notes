@@ -117,8 +117,7 @@ export function generateFlakeNix(): string {
           buildInputs = tauriSystemDeps ++ [
             rustToolchain
             pkgs.nodejs_20
-            pkgs.nodePackages.npm
-            pkgs.tauri-cli
+            pkgs.cargo-tauri
           ];
 
           PKG_CONFIG_PATH = "${DEFAULT_BUILD_ENV.pkgConfigPath}";

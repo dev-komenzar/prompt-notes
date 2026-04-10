@@ -26,7 +26,7 @@
           pkg-config
           openssl
           openssl.dev
-          webkit2gtk_4_1
+          webkitgtk_4_1
           gtk3
           glib-networking
           gdk-pixbuf
@@ -70,7 +70,7 @@
 
           buildInputs = tauriSystemDeps;
 
-          PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig:${pkgs.glib.dev}/lib/pkgconfig:${pkgs.webkit2gtk_4_1.dev}/lib/pkgconfig";
+          PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig:${pkgs.glib.dev}/lib/pkgconfig:${pkgs.webkitgtk_4_1.dev}/lib/pkgconfig";
           WEBKIT_DISABLE_COMPOSITING_MODE = "1";
           GIO_MODULE_DIR = "${pkgs.glib-networking}/lib/gio/modules";
 
@@ -106,11 +106,10 @@
           buildInputs = tauriSystemDeps ++ [
             rustToolchain
             pkgs.nodejs_20
-            pkgs.nodePackages.npm
-            pkgs.tauri-cli
+            pkgs.cargo-tauri
           ];
 
-          PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig:${pkgs.glib.dev}/lib/pkgconfig:${pkgs.webkit2gtk_4_1.dev}/lib/pkgconfig";
+          PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig:${pkgs.glib.dev}/lib/pkgconfig:${pkgs.webkitgtk_4_1.dev}/lib/pkgconfig";
           WEBKIT_DISABLE_COMPOSITING_MODE = "1";
           GIO_MODULE_DIR = "${pkgs.glib-networking}/lib/gio/modules";
 

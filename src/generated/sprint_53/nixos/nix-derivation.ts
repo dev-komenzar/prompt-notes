@@ -46,7 +46,7 @@ export const TAURI_SYSTEM_DEPS = [
   "pkg-config",
   "openssl",
   "openssl.dev",
-  "webkit2gtk_4_1",
+  "webkitgtk_4_1",
   "gtk3",
   "glib-networking",
   "gdk-pixbuf",
@@ -57,7 +57,7 @@ export const TAURI_SYSTEM_DEPS = [
 
 /** Runtime-only wrapping libs for the installed binary */
 export const TAURI_RUNTIME_LIBS = [
-  "webkit2gtk_4_1",
+  "webkitgtk_4_1",
   "gtk3",
   "glib-networking",
   "openssl",
@@ -79,7 +79,7 @@ export interface NixBuildEnv {
 }
 
 export const DEFAULT_BUILD_ENV: NixBuildEnv = {
-  pkgConfigPath: "${pkgs.openssl.dev}/lib/pkgconfig:${pkgs.glib.dev}/lib/pkgconfig:${pkgs.webkit2gtk_4_1.dev}/lib/pkgconfig",
+  pkgConfigPath: "${pkgs.openssl.dev}/lib/pkgconfig:${pkgs.glib.dev}/lib/pkgconfig:${pkgs.webkitgtk_4_1.dev}/lib/pkgconfig",
   webkitDisableCompositingMode: true,
   gioModuleDir: "${pkgs.glib-networking}/lib/gio/modules",
 };
