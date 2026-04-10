@@ -18,6 +18,9 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# Nix/direnv
+.direnv/
 ```
 
 Now let me add the missing `once_cell` dependency to the Rust Cargo.toml, since we use it in config.rs:
