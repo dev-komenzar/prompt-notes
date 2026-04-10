@@ -128,7 +128,7 @@ Rust バックエンドのファイル CRUD・frontmatter パース/シリアラ
 | `read_note` 実装 | `src-tauri/src/storage/core.rs` | ファイル読み込み → frontmatter/本文分離 → `NoteData { metadata, body }` 返却 |
 | `save_note` 実装（アトミック書き込み） | `src-tauri/src/storage/core.rs` | frontmatter シリアライズ + 本文結合 → `.{filename}.tmp` に書き込み → `std::fs::rename()` でアトミック置換 |
 | `delete_note` 実装 | `src-tauri/src/storage/core.rs` | パストラバーサル防止バリデーション（`filename` にパス区切り文字が含まれないことを検証）→ ファイル物理削除 |
-| `list_notes` 実装 | `src-tauri/src/storage/core.rs` | ディレクトリ走査 → `.md` ファイルのみ対象（`.tmp` 除外、`YYYY-MM-DDTHHMMSS.md` 形式チェック）→ frontmatter パース → `NoteMetadata[]` を `created_at` 降順で返却。`body_preview` は本文先頭 200 文字。 |
+| `list_notes` 実装 | `src-tauri/src/storage/core.rs` | ディレクトリ走査 → `.md` ファイルのみ対象（`.tmp` 除外、`YYYY-MM-DDTHHMMSS.md` 形式チェック）→ frontmatter パース → `NoteMetadata[]` を `created_at` 降順で返却。`body_preview` は本文先頭 200 文字（Unicode 文字単位でカウント、`char_indices` による正確な文字境界処理）。 |
 | セキュリティ対策 | `src-tauri/src/storage/core.rs` | パストラバーサル防止（フルパス正規化後に `notes_dir` 配下であることを確認）、シンボリックリンク非追跡 |
 | Rust ユニットテスト | `src-tauri/src/storage/tests/` | 全 CRUD 操作、frontmatter パース、パス解決、パストラバーサル拒否、アトミック書き込みの各テスト |
 

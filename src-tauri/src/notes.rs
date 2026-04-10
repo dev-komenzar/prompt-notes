@@ -1,7 +1,7 @@
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoteEntry {
@@ -86,10 +86,15 @@ fn parse_tags_from_yaml(yaml_block: &str) -> Vec<String> {
 /// Create a body preview (first N chars).
 pub fn body_preview(body: &str, max_len: usize) -> String {
     let trimmed = body.trim();
-    if trimmed.len() <= max_len {
+    if trimmed.chars().count() <= max_len {
         trimmed.to_string()
     } else {
-        format!("{}…", &trimmed[..max_len])
+        let end = trimmed
+            .char_indices()
+            .nth(max_len)
+            .map(|(i, _)| i)
+            .unwrap_or(trimmed.len());
+        format!("{}…", &trimmed[..end])
     }
 }
 
@@ -194,4 +199,56 @@ pub fn ensure_dir(dir: &Path) -> Result<(), String> {
         fs::create_dir_all(dir).map_err(|e| format!("Failed to create directory: {}", e))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn body_preview_short_ascii() {
+        assert_eq!(body_preview("hello", 10), "hello");
+    }
+
+    #[test]
+    fn body_preview_exact_length() {
+        assert_eq!(body_preview("12345", 5), "12345");
+    }
+
+    #[test]
+    fn body_preview_truncates_ascii() {
+        assert_eq!(body_preview("hello world", 5), "hello…");
+    }
+
+    #[test]
+    fn body_preview_japanese_no_truncation() {
+        assert_eq!(body_preview("こんにちは", 5), "こんにちは");
+    }
+
+    #[test]
+    fn body_preview_japanese_truncation() {
+        let result = body_preview("こんにちは世界", 5);
+        assert_eq!(result, "こんにちは…");
+    }
+
+    #[test]
+    fn body_preview_mixed_multibyte() {
+        let result = body_preview("aあbいcうdえe", 5);
+        assert_eq!(result, "aあbいc…");
+    }
+
+    #[test]
+    fn body_preview_trims_whitespace() {
+        assert_eq!(body_preview("  hello  ", 10), "hello");
+    }
+
+    #[test]
+    fn body_preview_empty_string() {
+        assert_eq!(body_preview("", 10), "");
+    }
+
+    #[test]
+    fn body_preview_zero_max_len() {
+        assert_eq!(body_preview("hello", 0), "…");
+    }
 }

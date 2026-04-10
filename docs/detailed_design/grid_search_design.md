@@ -2,7 +2,7 @@
 codd:
   node_id: detail:grid_search
   type: design
-  modules: [lib/components]
+  modules: [lib/components, src-tauri/src/notes]
   depends_on:
   - id: detail:component_architecture
     relation: depends_on
