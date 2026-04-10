@@ -39,3 +39,21 @@ codd generate --wave 1 --force
 - 変更点4
 - 変更点5
 ```
+
+### Sprintでコードを生成した場合
+
+```markdwon
+update: Sprint XX コード生成
+
+## 生成コマンド
+
+codd implement --sprint XX
+
+## 変更点
+
+- 変更点1
+- 変更点2
+- 変更点3
+- 変更点4
+- 変更点5
+```
