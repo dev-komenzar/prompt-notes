@@ -1,0 +1,7 @@
+/* @codd:task 29-1 frontmatter background decoration
+ * Copy to src/lib/styles/editor.css
+ */
+
+.cm-frontmatter-bg {
+  background-color: rgba(59, 130, 246, 0.08);
+}
