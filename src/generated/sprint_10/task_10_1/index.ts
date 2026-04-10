@@ -1,7 +1,7 @@
 // @generated-by: codd implement
 // @generated-from: docs/plan/implementation_plan.md (plan:implementation_plan)
 // @task-id: 10-1
-// @task-title: 全モジュール
+// @task-title: 完了条件
 // @generated-from: docs/design/system_design.md (design:system-design)
 // @generated-from: docs/detailed_design/component_architecture.md (detail:component_architecture)
 // @generated-from: docs/detailed_design/editor_clipboard_design.md (detail:editor_clipboard)
@@ -11,115 +11,104 @@
 // @generated-from: docs/requirements/requirements.md (req:promptnotes-requirements)
 // @generated-from: docs/test/acceptance_criteria.md (test:acceptance_criteria)
 
-// CoDD Trace: sprint:10 task:10-1 module:ci-pipeline
-// Public API barrel export for CI pipeline modules
+// @generated-from: docs/test/acceptance_criteria.md
+// @generated-by: codd generate --wave 10
 
 export type {
-  Platform,
-  ModuleName,
-  DistributionFormat,
-  BuildTarget,
-  ArtifactDescriptor,
-  ModuleTestResult,
-  BuildResult,
-  PipelineResult,
-  CIEnvironment,
-  ReleaseBlocker,
-  ReleaseBlockerResult,
-} from "./types";
+  CriteriaStatus,
+  ModuleTarget,
+  CriterionResult,
+  AcceptanceCriterion,
+  FailureCriterion,
+  CompletionReport,
+} from './types';
 
-export { ALL_MODULES, REQUIRED_MODULES, SUPPORTED_PLATFORMS } from "./types";
+export {
+  ALL_ACCEPTANCE_CRITERIA,
+  EDITOR_ACCEPTANCE_CRITERIA,
+  STORAGE_ACCEPTANCE_CRITERIA,
+  GRID_ACCEPTANCE_CRITERIA,
+  SETTINGS_ACCEPTANCE_CRITERIA,
+  DISTRIBUTION_ACCEPTANCE_CRITERIA,
+  DEVENV_ACCEPTANCE_CRITERIA,
+} from './acceptance-criteria';
+
+export {
+  ALL_FAILURE_CRITERIA,
+  EDITOR_FAILURE_CRITERIA,
+  STORAGE_FAILURE_CRITERIA,
+  GRID_FAILURE_CRITERIA,
+  SCOPE_GUARD_FAILURE_CRITERIA,
+  GENERAL_FAILURE_CRITERIA,
+} from './failure-criteria';
+
+export {
+  createCriterionResult,
+  evaluateAcceptanceCriterion,
+  evaluateFailureCriterion,
+  extractReleaseBlockers,
+  computeOverallStatus,
+  generateCompletionReport,
+} from './completion-checker';
+
+export {
+  checkQualityGate,
+  formatQualityGateReport,
+} from './quality-gate';
+
+export type { QualityGateResult } from './quality-gate';
+
+export {
+  isValidNoteFilename,
+  parseCreatedAtFromFilename,
+  validateFilenameTimestamp,
+} from './validators/filename-validator';
+
+export {
+  extractFrontmatterBlock,
+  parseFrontmatterTags,
+  detectForbiddenAutoFields,
+  validateFrontmatter,
+} from './validators/frontmatter-validator';
+
+export type { FrontmatterValidationResult } from './validators/frontmatter-validator';
+
+export {
+  checkEditorScopeGuards,
+  hasScopeViolation,
+} from './validators/scope-guard-validator';
+
+export type {
+  ScopeGuardResult,
+  DomScopeGuardInput,
+} from './validators/scope-guard-validator';
 
 export {
   detectPlatform,
-  getBuildTarget,
-  getAllBuildTargets,
-  detectCIEnvironment,
   validatePlatform,
-  assertNotWindows,
-} from "./platform";
+  expandHomePath,
+} from './validators/platform-validator';
+
+export type {
+  SupportedPlatform,
+  PlatformValidationResult,
+} from './validators/platform-validator';
 
 export {
-  generateBuildMatrix,
-  getMatrixEntry,
-  generateGitHubActionsMatrix,
-  getLinuxSystemDeps,
-  getMacOSDeps,
-  getSystemDeps,
-} from "./build-matrix";
+  REQUIRED_IPC_COMMANDS,
+  IPC_COMMAND_SPECS,
+  validateIpcCommandsRegistered,
+} from './validators/ipc-boundary-validator';
 
-export type { MatrixEntry } from "./build-matrix";
-
-export {
-  getArtifactFileName,
-  getTauriBundleOutputDir,
-  getExpectedArtifactPaths,
-  computeChecksum,
-  collectArtifacts,
-  validateArtifacts,
-} from "./artifact-config";
-
-export type { ArtifactNamingConfig } from "./artifact-config";
+export type {
+  IpcCommandName,
+  IpcCommandSpec,
+} from './validators/ipc-boundary-validator';
 
 export {
-  createReleaseBlockers,
-  runAllReleaseBlockerChecks,
-} from "./release-blocker-check";
+  TEST_FILE_MAPPINGS,
+  TEST_HELPER_FILES,
+  CRITERIA_TO_TEST_DOMAIN,
+} from './test-mapping';
 
-export {
-  runEnvironmentCheck,
-  formatEnvironmentReport,
-  checkProjectStructure,
-} from "./env-check";
-
-export {
-  runAllModuleTests,
-  createDefaultTestConfig,
-  runRustTests,
-  runFrontendTests,
-  formatTestResults,
-} from "./test-orchestrator";
-
-export type { TestSuiteConfig, TestOrchestratorResult } from "./test-orchestrator";
-
-export {
-  executeBuild,
-  createDefaultBuildConfig,
-  formatBuildResult,
-} from "./build-executor";
-
-export type { BuildConfig } from "./build-executor";
-
-export {
-  getFlatpakManifest,
-  getHomebrewCaskConfig,
-  getNixPackageConfig,
-  getDistributionFormats,
-  generateFlatpakManifestJson,
-  generateHomebrewCaskFormula,
-  generateNixDerivation,
-} from "./distribution-config";
-
-export {
-  validateTauriConf,
-  validateCargoToml,
-  formatValidationResult,
-} from "./tauri-conf-validator";
-
-export type { TauriConfValidationResult } from "./tauri-conf-validator";
-
-export {
-  generateCIWorkflow,
-  generateReleaseWorkflow,
-  serializeWorkflow,
-} from "./github-actions-generator";
-
-export type { WorkflowDefinition } from "./github-actions-generator";
-
-export {
-  runCIPipeline,
-  formatPipelineResult,
-  createDefaultPipelineConfig,
-} from "./ci-pipeline";
-
-export type { PipelineConfig } from "./ci-pipeline";
+export type { TestFileMapping, TestHelperFile } from './test-mapping';
