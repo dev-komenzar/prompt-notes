@@ -1,22 +1,12 @@
-import { defineConfig } from "vite";
-import { svelte } from "@sveltejs/vite-plugin-svelte";
-import { resolve } from "path";
+import { sveltekit } from '@sveltejs/kit/vite';
+import { defineConfig } from 'vite';
 
-// https://vitejs.dev/config/
-export default defineConfig(async () => ({
-  plugins: [svelte()],
-  resolve: {
-    alias: {
-      $lib: resolve(__dirname, "./src/lib"),
-    },
-  },
-  // Vite options tailored for Tauri development
+export default defineConfig({
+  plugins: [sveltekit()],
   clearScreen: false,
   server: {
     port: 1420,
-    strictPort: true,
-    watch: {
-      ignored: ["**/src-tauri/**"],
-    },
+    strictPort: true
   },
-}));
+  envPrefix: ['VITE_', 'TAURI_']
+});

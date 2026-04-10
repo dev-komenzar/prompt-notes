@@ -1,94 +1,53 @@
-// Sprint 8/20/66 – CM6 StateField + Decoration for frontmatter background
-// OQ-002 resolution: StateField approach (not ViewPlugin) for reliable decoration
 import {
-  StateField,
-  type Extension,
-  type Transaction,
-} from "@codemirror/state";
-import {
+  ViewPlugin,
   Decoration,
   type DecorationSet,
-  EditorView,
-} from "@codemirror/view";
-import { detectFrontmatterRange } from "../frontmatter";
+  type EditorView,
+  type ViewUpdate
+} from '@codemirror/view';
+import { RangeSetBuilder } from '@codemirror/state';
 
-/** CSS class applied to frontmatter line decorations */
-const FRONTMATTER_LINE_CLASS = "cm-frontmatter-line";
-
-/**
- * Create line decorations for all lines within the frontmatter range.
- */
-function buildDecorations(view: EditorView): DecorationSet {
-  const doc = view.state.doc.toString();
-  const range = detectFrontmatterRange(doc);
-  if (!range) return Decoration.none;
-
-  const decorations: any[] = [];
-  const lineDeco = Decoration.line({ class: FRONTMATTER_LINE_CLASS });
-
-  for (let pos = range.from; pos < range.to; ) {
-    const line = view.state.doc.lineAt(pos);
-    decorations.push(lineDeco.range(line.from));
-    pos = line.to + 1;
-  }
-
-  return Decoration.set(decorations);
-}
-
-/**
- * StateField that tracks frontmatter decoration ranges.
- * Rebuilds decorations whenever the document changes.
- */
-const frontmatterField = StateField.define<DecorationSet>({
-  create(state) {
-    // Build initial decorations using a temporary approach
-    // We need an EditorView but don't have one during create,
-    // so we detect the range directly from state.doc
-    const doc = state.doc.toString();
-    const range = detectFrontmatterRange(doc);
-    if (!range) return Decoration.none;
-
-    const decorations: any[] = [];
-    const lineDeco = Decoration.line({ class: FRONTMATTER_LINE_CLASS });
-
-    for (let pos = range.from; pos < range.to; ) {
-      const line = state.doc.lineAt(pos);
-      decorations.push(lineDeco.range(line.from));
-      pos = line.to + 1;
-    }
-    return Decoration.set(decorations);
-  },
-  update(decos: DecorationSet, tr: Transaction) {
-    if (!tr.docChanged) return decos;
-    // Rebuild on any doc change
-    const doc = tr.state.doc.toString();
-    const range = detectFrontmatterRange(doc);
-    if (!range) return Decoration.none;
-
-    const decorations: any[] = [];
-    const lineDeco = Decoration.line({ class: FRONTMATTER_LINE_CLASS });
-
-    for (let pos = range.from; pos < range.to; ) {
-      const line = tr.state.doc.lineAt(pos);
-      decorations.push(lineDeco.range(line.from));
-      pos = line.to + 1;
-    }
-    return Decoration.set(decorations);
-  },
-  provide: (f) => EditorView.decorations.from(f),
+const frontmatterLineDecoration = Decoration.line({
+  attributes: { class: 'cm-frontmatter-line' }
 });
 
-/**
- * Extension that applies a background style to the YAML frontmatter block.
- * Uses StateField + Decoration per OQ-002 resolution.
- */
-export function frontmatterDecoration(): Extension {
-  return [
-    frontmatterField,
-    EditorView.baseTheme({
-      [`.${FRONTMATTER_LINE_CLASS}`]: {
-        backgroundColor: "rgba(128, 128, 128, 0.08)",
-      },
-    }),
-  ];
+function buildDecorations(view: EditorView): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>();
+  const doc = view.state.doc;
+
+  if (doc.lines < 1) return builder.finish();
+
+  const firstLine = doc.line(1);
+  if (firstLine.text !== '---') return builder.finish();
+
+  builder.add(firstLine.from, firstLine.from, frontmatterLineDecoration);
+
+  for (let i = 2; i <= doc.lines; i++) {
+    const line = doc.line(i);
+    builder.add(line.from, line.from, frontmatterLineDecoration);
+    if (line.text === '---') {
+      break;
+    }
+  }
+
+  return builder.finish();
 }
+
+export const frontmatterDecorationPlugin = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet;
+
+    constructor(view: EditorView) {
+      this.decorations = buildDecorations(view);
+    }
+
+    update(update: ViewUpdate) {
+      if (update.docChanged || update.viewportChanged) {
+        this.decorations = buildDecorations(update.view);
+      }
+    }
+  },
+  {
+    decorations: (v) => v.decorations
+  }
+);

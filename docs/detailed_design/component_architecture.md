@@ -2,6 +2,7 @@
 codd:
   node_id: detail:component_architecture
   type: design
+  modules: [lib]
   depends_on:
   - id: design:system-design
     relation: depends_on

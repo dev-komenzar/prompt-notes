@@ -1,418 +1,197 @@
-// Note file operations: create, read, save, delete, list, search
-use chrono::{Local, NaiveDateTime};
+use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::config;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoteEntry {
     pub filename: String,
-    pub path: String,
-    pub created_at: String,
-    pub modified_at: String,
     pub tags: Vec<String>,
-    pub title: String,
-    pub preview: String,
-    pub size: u64,
+    pub body_preview: String,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateNoteResult {
     pub filename: String,
-    pub path: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ListNotesParams {
-    pub from: Option<String>,
-    pub to: Option<String>,
-    pub tags: Option<Vec<String>>,
-    pub sort_by: Option<String>,
-    pub sort_order: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SearchNotesParams {
-    pub query: String,
-    pub from: Option<String>,
-    pub to: Option<String>,
-    pub tags: Option<Vec<String>>,
+pub struct ReadNoteResult {
+    pub raw: String,
+    pub tags: Vec<String>,
+    pub body: String,
 }
 
-/// Generate a filename in YYYY-MM-DDTHHMMSS.md format with _N collision suffix
-fn generate_filename(dir: &Path) -> Result<String, String> {
-    let now = Local::now();
-    let base = now.format("%Y-%m-%dT%H%M%S").to_string();
-    let candidate = format!("{}.md", base);
-
-    if !dir.join(&candidate).exists() {
-        return Ok(candidate);
-    }
-
-    // Handle collision with _N suffix
-    for n in 1..100 {
-        let candidate = format!("{}_{}.md", base, n);
-        if !dir.join(&candidate).exists() {
-            return Ok(candidate);
-        }
-    }
-
-    Err("Too many filename collisions".to_string())
+#[derive(Debug, Deserialize)]
+struct Frontmatter {
+    #[serde(default)]
+    tags: Vec<String>,
 }
 
-/// Parse the created_at timestamp from the filename
-fn parse_created_at(filename: &str) -> Option<String> {
-    // Expected: YYYY-MM-DDTHHMMSS.md or YYYY-MM-DDTHHMMSS_N.md
-    let stem = filename.strip_suffix(".md")?;
-    let base = if let Some(idx) = stem.rfind('_') {
-        // Check if suffix after _ is a number (collision suffix)
-        let suffix = &stem[idx + 1..];
-        if suffix.chars().all(|c| c.is_ascii_digit()) {
-            &stem[..idx]
-        } else {
-            stem
-        }
+/// Generate a filename from the current timestamp: YYYY-MM-DDTHHMMSS.md
+pub fn generate_filename() -> String {
+    let now = chrono::Local::now();
+    now.format("%Y-%m-%dT%H%M%S.md").to_string()
+}
+
+/// Build full raw content with YAML frontmatter.
+pub fn build_raw(body: &str, tags: &[String]) -> String {
+    let tags_yaml = if tags.is_empty() {
+        "tags: []".to_string()
     } else {
-        stem
+        let items: Vec<String> = tags.iter().map(|t| format!("  - {}", t)).collect();
+        format!("tags:\n{}", items.join("\n"))
     };
+    format!("---\n{}\n---\n{}", tags_yaml, body)
+}
 
-    // Parse YYYY-MM-DDTHHMMSS
-    if base.len() == 17 {
-        let formatted = format!(
-            "{}-{}-{}T{}:{}:{}",
-            &base[0..4],
-            &base[5..7],
-            &base[8..10],
-            &base[11..13],
-            &base[13..15],
-            &base[15..17]
-        );
-        Some(formatted)
+/// Parse raw content into (tags, body).
+pub fn parse_raw(raw: &str) -> (Vec<String>, String) {
+    if !raw.starts_with("---\n") {
+        return (vec![], raw.to_string());
+    }
+
+    let rest = &raw[4..]; // skip "---\n"
+    if let Some(end_idx) = rest.find("\n---\n") {
+        let yaml_block = &rest[..end_idx];
+        let body = &rest[end_idx + 5..]; // skip "\n---\n"
+
+        let tags = parse_tags_from_yaml(yaml_block);
+        (tags, body.to_string())
+    } else if let Some(end_idx) = rest.find("\n---") {
+        // Handle case where --- is at end of file with no trailing newline
+        let yaml_block = &rest[..end_idx];
+        let body_start = end_idx + 4; // skip "\n---"
+        let body = if body_start < rest.len() {
+            &rest[body_start..]
+        } else {
+            ""
+        };
+        let tags = parse_tags_from_yaml(yaml_block);
+        (tags, body.to_string())
+    } else {
+        (vec![], raw.to_string())
+    }
+}
+
+fn parse_tags_from_yaml(yaml_block: &str) -> Vec<String> {
+    // Try serde_yaml first
+    if let Ok(fm) = serde_yaml::from_str::<Frontmatter>(yaml_block) {
+        return fm.tags;
+    }
+    vec![]
+}
+
+/// Create a body preview (first N chars).
+pub fn body_preview(body: &str, max_len: usize) -> String {
+    let trimmed = body.trim();
+    if trimmed.len() <= max_len {
+        trimmed.to_string()
+    } else {
+        format!("{}…", &trimmed[..max_len])
+    }
+}
+
+/// List notes in the given directory with optional filters.
+pub fn list_notes_in_dir(
+    dir: &Path,
+    date_from: Option<&str>,
+    date_to: Option<&str>,
+    tags: Option<&[String]>,
+) -> Result<Vec<NoteEntry>, String> {
+    ensure_dir(dir)?;
+
+    let mut entries: Vec<NoteEntry> = Vec::new();
+
+    let read_dir = fs::read_dir(dir).map_err(|e| format!("Failed to read directory: {}", e))?;
+
+    let from_date = date_from.and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok());
+    let to_date = date_to.and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok());
+
+    for entry in read_dir {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let file_name = entry.file_name().to_string_lossy().to_string();
+
+        if !file_name.ends_with(".md") {
+            continue;
+        }
+
+        // Date filter from filename
+        if let Some(file_date) = parse_date_from_filename(&file_name) {
+            if let Some(ref from) = from_date {
+                if file_date < *from {
+                    continue;
+                }
+            }
+            if let Some(ref to) = to_date {
+                if file_date > *to {
+                    continue;
+                }
+            }
+        }
+
+        let path = entry.path();
+        let raw = fs::read_to_string(&path).unwrap_or_default();
+        let (note_tags, body) = parse_raw(&raw);
+
+        // Tag filter
+        if let Some(filter_tags) = tags {
+            if !filter_tags.is_empty() {
+                let has_match = filter_tags.iter().any(|t| note_tags.contains(t));
+                if !has_match {
+                    continue;
+                }
+            }
+        }
+
+        entries.push(NoteEntry {
+            filename: file_name.clone(),
+            tags: note_tags,
+            body_preview: body_preview(&body, 200),
+            created_at: file_name.clone(),
+        });
+    }
+
+    // Sort by filename descending (newest first)
+    entries.sort_by(|a, b| b.filename.cmp(&a.filename));
+
+    Ok(entries)
+}
+
+/// Search notes by query string (case-insensitive full-text search).
+pub fn search_notes_in_dir(
+    dir: &Path,
+    query: &str,
+    date_from: Option<&str>,
+    date_to: Option<&str>,
+    tags: Option<&[String]>,
+) -> Result<Vec<NoteEntry>, String> {
+    let all = list_notes_in_dir(dir, date_from, date_to, tags)?;
+    let query_lower = query.to_lowercase();
+
+    Ok(all
+        .into_iter()
+        .filter(|note| {
+            let path = dir.join(&note.filename);
+            let raw = fs::read_to_string(&path).unwrap_or_default();
+            raw.to_lowercase().contains(&query_lower)
+        })
+        .collect())
+}
+
+fn parse_date_from_filename(filename: &str) -> Option<NaiveDate> {
+    // YYYY-MM-DDTHHMMSS.md -> extract YYYY-MM-DD
+    if filename.len() >= 10 {
+        NaiveDate::parse_from_str(&filename[..10], "%Y-%m-%d").ok()
     } else {
         None
     }
 }
 
-/// Extract YAML frontmatter tags from note content
-fn extract_tags(content: &str) -> Vec<String> {
-    if !content.starts_with("---\n") && !content.starts_with("---\r\n") {
-        return vec![];
+pub fn ensure_dir(dir: &Path) -> Result<(), String> {
+    if !dir.exists() {
+        fs::create_dir_all(dir).map_err(|e| format!("Failed to create directory: {}", e))?;
     }
-
-    let open_len = if content.starts_with("---\r\n") { 5 } else { 4 };
-    let rest = &content[open_len..];
-
-    let close_idx = rest.find("\n---");
-    if close_idx.is_none() {
-        return vec![];
-    }
-
-    let fm = &rest[..close_idx.unwrap()];
-
-    // Try bracket format: tags: ["a", "b"]
-    if let Some(caps) = fm.find("tags:") {
-        let line = &fm[caps..];
-        if let Some(bracket_start) = line.find('[') {
-            if let Some(bracket_end) = line.find(']') {
-                let inner = &line[bracket_start + 1..bracket_end];
-                return inner
-                    .split(',')
-                    .map(|t| t.trim().trim_matches(|c| c == '"' || c == '\'').to_string())
-                    .filter(|t| !t.is_empty())
-                    .collect();
-            }
-        }
-
-        // Try list format: tags:\n  - item
-        let mut tags = vec![];
-        let mut in_tags = false;
-        for line in fm.lines() {
-            if line.starts_with("tags:") {
-                in_tags = true;
-                continue;
-            }
-            if in_tags {
-                let trimmed = line.trim();
-                if trimmed.starts_with("- ") {
-                    tags.push(
-                        trimmed[2..]
-                            .trim()
-                            .trim_matches(|c| c == '"' || c == '\'')
-                            .to_string(),
-                    );
-                } else if !trimmed.is_empty() {
-                    break;
-                }
-            }
-        }
-        if !tags.is_empty() {
-            return tags;
-        }
-    }
-
-    vec![]
-}
-
-/// Extract body text (everything after frontmatter)
-fn extract_body(content: &str) -> &str {
-    if !content.starts_with("---\n") && !content.starts_with("---\r\n") {
-        return content;
-    }
-    let open_len = if content.starts_with("---\r\n") { 5 } else { 4 };
-    let rest = &content[open_len..];
-    if let Some(close_idx) = rest.find("\n---") {
-        let after = close_idx + 4; // "\n---".len()
-        let body_start = if after < rest.len() {
-            if rest.as_bytes().get(after) == Some(&b'\n') {
-                after + 1
-            } else if rest.as_bytes().get(after) == Some(&b'\r') {
-                after + 2
-            } else {
-                after
-            }
-        } else {
-            after
-        };
-        if body_start < rest.len() {
-            return rest[body_start..].trim_start();
-        }
-        return "";
-    }
-    content
-}
-
-/// Extract the first non-empty line of body as title
-fn extract_title(content: &str) -> String {
-    let body = extract_body(content);
-    body.lines()
-        .find(|l| !l.trim().is_empty())
-        .unwrap_or("")
-        .trim()
-        .chars()
-        .take(100)
-        .collect()
-}
-
-/// Generate a preview of the body (first ~200 chars)
-fn extract_preview(content: &str) -> String {
-    let body = extract_body(content);
-    body.chars().take(200).collect()
-}
-
-/// Build a NoteEntry from a file path
-fn build_note_entry(path: &Path) -> Result<NoteEntry, String> {
-    let filename = path
-        .file_name()
-        .ok_or("Invalid filename")?
-        .to_string_lossy()
-        .to_string();
-
-    let metadata = fs::metadata(path).map_err(|e| e.to_string())?;
-    let modified_at = metadata
-        .modified()
-        .map(|t| {
-            let datetime: chrono::DateTime<Local> = t.into();
-            datetime.to_rfc3339()
-        })
-        .unwrap_or_default();
-
-    let content = fs::read_to_string(path).map_err(|e| e.to_string())?;
-
-    let created_at = parse_created_at(&filename).unwrap_or_else(|| modified_at.clone());
-    let tags = extract_tags(&content);
-    let title = extract_title(&content);
-    let preview = extract_preview(&content);
-
-    Ok(NoteEntry {
-        filename,
-        path: path.to_string_lossy().to_string(),
-        created_at,
-        modified_at,
-        tags,
-        title,
-        preview,
-        size: metadata.len(),
-    })
-}
-
-pub fn create_note(content: Option<String>, _tags: Option<Vec<String>>) -> Result<CreateNoteResult, String> {
-    let dir = config::get_notes_directory()?;
-    let filename = generate_filename(&dir)?;
-    let path = dir.join(&filename);
-
-    let note_content = content.unwrap_or_else(|| {
-        "---\ntags: []\n---\n\n".to_string()
-    });
-
-    fs::write(&path, &note_content).map_err(|e| e.to_string())?;
-
-    Ok(CreateNoteResult {
-        filename,
-        path: path.to_string_lossy().to_string(),
-    })
-}
-
-pub fn save_note(filename: &str, content: &str) -> Result<(), String> {
-    let dir = config::get_notes_directory()?;
-    let path = dir.join(filename);
-    if !path.exists() {
-        return Err(format!("Note not found: {}", filename));
-    }
-    fs::write(&path, content).map_err(|e| e.to_string())?;
     Ok(())
-}
-
-pub fn read_note(filename: &str) -> Result<String, String> {
-    let dir = config::get_notes_directory()?;
-    let path = dir.join(filename);
-    if !path.exists() {
-        return Err(format!("Note not found: {}", filename));
-    }
-    fs::read_to_string(&path).map_err(|e| e.to_string())
-}
-
-pub fn delete_note(filename: &str) -> Result<(), String> {
-    let dir = config::get_notes_directory()?;
-    let path = dir.join(filename);
-    if !path.exists() {
-        return Err(format!("Note not found: {}", filename));
-    }
-    fs::remove_file(&path).map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-/// Check if a date string (from filename) falls within the from/to range
-fn date_in_range(created_at: &str, from: &Option<String>, to: &Option<String>) -> bool {
-    // created_at is like "2025-01-15T14:30:22" or RFC3339
-    let date_part: &str = if created_at.len() >= 10 {
-        &created_at[..10]
-    } else {
-        return true; // Can't parse, include it
-    };
-
-    if let Some(from_date) = from {
-        if date_part < from_date.as_str() {
-            return false;
-        }
-    }
-    if let Some(to_date) = to {
-        if date_part > to_date.as_str() {
-            return false;
-        }
-    }
-    true
-}
-
-/// Check if a note has all the required tags
-fn has_required_tags(note_tags: &[String], required: &Option<Vec<String>>) -> bool {
-    match required {
-        None => true,
-        Some(req) => req.iter().all(|t| note_tags.contains(t)),
-    }
-}
-
-pub fn list_notes(params: ListNotesParams) -> Result<Vec<NoteEntry>, String> {
-    let dir = config::get_notes_directory()?;
-    if !dir.exists() {
-        return Ok(vec![]);
-    }
-
-    let mut entries: Vec<NoteEntry> = vec![];
-
-    let read_dir = fs::read_dir(&dir).map_err(|e| e.to_string())?;
-    for entry in read_dir {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let path = entry.path();
-        if path.extension().map(|e| e == "md").unwrap_or(false) {
-            if let Ok(note) = build_note_entry(&path) {
-                if !date_in_range(&note.created_at, &params.from, &params.to) {
-                    continue;
-                }
-                if !has_required_tags(&note.tags, &params.tags) {
-                    continue;
-                }
-                entries.push(note);
-            }
-        }
-    }
-
-    // Sort
-    let sort_by = params.sort_by.as_deref().unwrap_or("created");
-    let sort_desc = params.sort_order.as_deref().unwrap_or("desc") == "desc";
-
-    entries.sort_by(|a, b| {
-        let cmp = match sort_by {
-            "modified" => a.modified_at.cmp(&b.modified_at),
-            _ => a.created_at.cmp(&b.created_at),
-        };
-        if sort_desc {
-            cmp.reverse()
-        } else {
-            cmp
-        }
-    });
-
-    Ok(entries)
-}
-
-pub fn search_notes(params: SearchNotesParams) -> Result<Vec<NoteEntry>, String> {
-    let dir = config::get_notes_directory()?;
-    if !dir.exists() {
-        return Ok(vec![]);
-    }
-
-    let query_lower = params.query.to_lowercase();
-    let mut results: Vec<NoteEntry> = vec![];
-
-    let read_dir = fs::read_dir(&dir).map_err(|e| e.to_string())?;
-    for entry in read_dir {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let path = entry.path();
-        if path.extension().map(|e| e == "md").unwrap_or(false) {
-            if let Ok(content) = fs::read_to_string(&path) {
-                if content.to_lowercase().contains(&query_lower) {
-                    if let Ok(note) = build_note_entry(&path) {
-                        if !date_in_range(&note.created_at, &params.from, &params.to) {
-                            continue;
-                        }
-                        if !has_required_tags(&note.tags, &params.tags) {
-                            continue;
-                        }
-                        results.push(note);
-                    }
-                }
-            }
-        }
-    }
-
-    // Sort by created descending
-    results.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-
-    Ok(results)
-}
-
-pub fn get_all_tags() -> Result<Vec<String>, String> {
-    let dir = config::get_notes_directory()?;
-    if !dir.exists() {
-        return Ok(vec![]);
-    }
-
-    let mut all_tags: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-
-    let read_dir = fs::read_dir(&dir).map_err(|e| e.to_string())?;
-    for entry in read_dir {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let path = entry.path();
-        if path.extension().map(|e| e == "md").unwrap_or(false) {
-            if let Ok(content) = fs::read_to_string(&path) {
-                for tag in extract_tags(&content) {
-                    all_tags.insert(tag);
-                }
-            }
-        }
-    }
-
-    Ok(all_tags.into_iter().collect())
 }

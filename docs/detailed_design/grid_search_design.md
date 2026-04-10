@@ -2,6 +2,7 @@
 codd:
   node_id: detail:grid_search
   type: design
+  modules: [lib/components]
   depends_on:
   - id: detail:component_architecture
     relation: depends_on

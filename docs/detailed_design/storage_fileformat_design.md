@@ -2,6 +2,7 @@
 codd:
   node_id: detail:storage_fileformat
   type: design
+  modules: [lib/stores]
   depends_on:
   - id: detail:component_architecture
     relation: depends_on

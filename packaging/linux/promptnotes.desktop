@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=PromptNotes
+GenericName=Note Taking
+Exec=promptnotes %U
+Icon=promptnotes
+Comment=Local note-taking app for AI prompts
+Categories=Utility;TextEditor;
+Terminal=false
+StartupNotify=true
+StartupWMClass=promptnotes

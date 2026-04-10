@@ -1,104 +1,63 @@
-// Application configuration management
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Mutex;
-use tauri::AppHandle;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AppConfig {
-    pub notes_directory: String,
-    pub default_filter_days: u32,
+pub struct Config {
+    pub notes_dir: String,
 }
 
-impl Default for AppConfig {
+impl Default for Config {
     fn default() -> Self {
-        // Default notes directory: ~/promptnotes
         let default_dir = dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join("promptnotes");
-        Self {
-            notes_directory: default_dir.to_string_lossy().to_string(),
-            default_filter_days: 7,
+        Config {
+            notes_dir: default_dir.to_string_lossy().to_string(),
         }
     }
 }
 
-static CONFIG: once_cell::sync::Lazy<Mutex<AppConfig>> =
-    once_cell::sync::Lazy::new(|| Mutex::new(AppConfig::default()));
+impl Config {
+    fn config_path() -> PathBuf {
+        dirs::config_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("promptnotes")
+            .join("config.json")
+    }
 
-fn config_path(app_handle: &AppHandle) -> PathBuf {
-    let app_dir = app_handle
-        .path()
-        .app_config_dir()
-        .unwrap_or_else(|_| PathBuf::from("."));
-    app_dir.join("config.json")
-}
+    pub fn load() -> Self {
+        let path = Self::config_path();
+        if path.exists() {
+            let content = fs::read_to_string(&path).unwrap_or_default();
+            serde_json::from_str(&content).unwrap_or_default()
+        } else {
+            let config = Config::default();
+            config.save().ok();
+            config
+        }
+    }
 
-pub fn init_config(app_handle: &AppHandle) -> Result<(), String> {
-    let path = config_path(app_handle);
-    if path.exists() {
-        let data = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-        let cfg: AppConfig = serde_json::from_str(&data).unwrap_or_default();
-        let mut config = CONFIG.lock().map_err(|e| e.to_string())?;
-        *config = cfg;
-    } else {
-        // Ensure the config directory exists
+    pub fn save(&self) -> Result<(), String> {
+        let path = Self::config_path();
         if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
-        save_config_to_disk(app_handle)?;
+        let json = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
+        fs::write(&path, json).map_err(|e| e.to_string())
     }
 
-    // Ensure notes directory exists
-    let notes_dir = {
-        let config = CONFIG.lock().map_err(|e| e.to_string())?;
-        config.notes_directory.clone()
-    };
-    let notes_path = PathBuf::from(&notes_dir);
-    if !notes_path.exists() {
-        fs::create_dir_all(&notes_path).map_err(|e| e.to_string())?;
+    pub fn notes_path(&self) -> PathBuf {
+        let expanded = shellexpand_simple(&self.notes_dir);
+        PathBuf::from(expanded)
     }
-
-    Ok(())
 }
 
-fn save_config_to_disk(app_handle: &AppHandle) -> Result<(), String> {
-    let path = config_path(app_handle);
-    let config = CONFIG.lock().map_err(|e| e.to_string())?;
-    let data = serde_json::to_string_pretty(&*config).map_err(|e| e.to_string())?;
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    fs::write(&path, data).map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-pub fn get_current_config() -> Result<AppConfig, String> {
-    let config = CONFIG.lock().map_err(|e| e.to_string())?;
-    Ok(config.clone())
-}
-
-pub fn update_config(app_handle: &AppHandle, updates: serde_json::Value) -> Result<(), String> {
-    {
-        let mut config = CONFIG.lock().map_err(|e| e.to_string())?;
-        if let Some(dir) = updates.get("notes_directory").and_then(|v| v.as_str()) {
-            config.notes_directory = dir.to_string();
-            // Ensure new directory exists
-            let path = PathBuf::from(dir);
-            if !path.exists() {
-                fs::create_dir_all(&path).map_err(|e| e.to_string())?;
-            }
-        }
-        if let Some(days) = updates.get("default_filter_days").and_then(|v| v.as_u64()) {
-            config.default_filter_days = days as u32;
+fn shellexpand_simple(path: &str) -> String {
+    if path.starts_with("~/") {
+        if let Some(home) = dirs::home_dir() {
+            return format!("{}{}", home.display(), &path[1..]);
         }
     }
-    save_config_to_disk(app_handle)?;
-    Ok(())
-}
-
-pub fn get_notes_directory() -> Result<PathBuf, String> {
-    let config = CONFIG.lock().map_err(|e| e.to_string())?;
-    Ok(PathBuf::from(&config.notes_directory))
+    path.to_string()
 }

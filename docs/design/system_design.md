@@ -2,6 +2,7 @@
 codd:
   node_id: design:system-design
   type: design
+  modules: [lib]
   depends_on:
   - id: test:acceptance_criteria
     relation: constrained_by

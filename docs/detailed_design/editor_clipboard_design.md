@@ -2,6 +2,7 @@
 codd:
   node_id: detail:editor_clipboard
   type: design
+  modules: [lib/editor]
   depends_on:
   - id: detail:component_architecture
     relation: depends_on

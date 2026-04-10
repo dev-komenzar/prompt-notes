@@ -1,30 +1,40 @@
 {
-  "$schema": "https://raw.githubusercontent.com/nicegui/nicegui-2/main/node_modules/@tauri-apps/cli/schema.json",
+  "$schema": "https://raw.githubusercontent.com/nicktomlin/tauri-v2-schemas/refs/heads/main/tauri.conf.json",
   "productName": "PromptNotes",
   "version": "0.1.0",
-  "identifier": "com.devkomenzar.promptnotes",
+  "identifier": "com.promptnotes.app",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "frontendDist": "../build",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
-    "frontendDist": "../dist"
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
   },
   "app": {
-    "title": "PromptNotes",
     "windows": [
       {
         "title": "PromptNotes",
         "width": 1200,
         "height": 800,
+        "minWidth": 600,
+        "minHeight": 400,
         "resizable": true,
-        "fullscreen": false
+        "decorations": true
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'"
     }
   },
-  "plugins": {
-    "dialog": {}
-  }
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  },
+  "plugins": {}
 }
