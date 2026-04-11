@@ -3,7 +3,7 @@ project:
   frameworks: []
   name: promptnotes
   language: typescript
-ai_command:
+ai_commands:
   generate: claude --print --model claude-opus-4-6 --tools "" --system-prompt "Output ONLY the requested content. Never wrap output in Markdown fences. Never add summaries, headings, or explanatory prose before or after the output."
   implement: 'claude --print --model claude-sonnet-4-6 --tools ""'
 
