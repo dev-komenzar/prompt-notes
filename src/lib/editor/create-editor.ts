@@ -58,6 +58,7 @@ export function createEditor(options: EditorOptions): EditorView {
 
   const state = EditorState.create({
     doc: content,
+    selection: { anchor: content.length },
     extensions: [
       lineNumbers(),
       highlightActiveLine(),
@@ -74,5 +75,7 @@ export function createEditor(options: EditorOptions): EditorView {
     ]
   });
 
-  return new EditorView({ state, parent });
+  const view = new EditorView({ state, parent });
+  view.focus();
+  return view;
 }

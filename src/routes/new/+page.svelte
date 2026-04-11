@@ -1,14 +1,14 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
   import TopBar from '$lib/components/TopBar.svelte';
   import Editor from '$lib/components/Editor.svelte';
   import CopyButton from '$lib/components/CopyButton.svelte';
   import { createNote, saveNote } from '$lib/api';
   import { generateFrontmatter, extractBody, parseTags } from '$lib/utils/frontmatter';
 
-  let editor: Editor;
+  let editor: Editor | undefined = $state();
   let filename: string | null = null;
   let saving = $state(false);
+  let editorKey = $state(0);
 
   const initialContent = generateFrontmatter([]) + '\n';
 
@@ -34,7 +34,8 @@
   }
 
   function handleNewNote(): boolean {
-    goto('/new');
+    filename = null;
+    editorKey += 1;
     return true;
   }
 
@@ -56,12 +57,14 @@
   </div>
 </div>
 
-<Editor
-  bind:this={editor}
-  content={initialContent}
-  onSave={handleSave}
-  onNewNote={handleNewNote}
-/>
+{#key editorKey}
+  <Editor
+    bind:this={editor}
+    content={initialContent}
+    onSave={handleSave}
+    onNewNote={handleNewNote}
+  />
+{/key}
 
 <style>
   .editor-toolbar {
