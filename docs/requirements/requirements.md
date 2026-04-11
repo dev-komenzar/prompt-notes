@@ -103,6 +103,28 @@ macOS:   ~/Library/Application Support/promptnotes/notes/
 - **1クリックコピーボタン** — 本文全体をクリップボードにコピー（このアプリの核心UX）
 - 保存は自動（ファイル名はノート作成時のタイムスタンプで確定）
 
+│ Header            │
+├───────── │
+│tags:              │
+│                   │
+│Typing a new note  │
+│                   │
+│                   │
+├───────── │
+│tags:              │
+│                   │
+│Next note          │
+│something great    │
+│                   │
+├───────── │
+│                   │
+
+このように編集画面では過去のノートがリストになって見れる。選択すればそのまま編集も可能。
+
+#### 新規ノートの場合
+
+- エディタ画面が新規ノートの場合でも**Cmd+N / Ctrl+N** で即座にさらに新規ノートを作成しフォーカス移動
+
 ### グリッドビュー
 
 - Pinterestスタイルの可変高カード
@@ -134,21 +156,3 @@ macOS:   ~/Library/Application Support/promptnotes/notes/
 - タイトル
 - Markdownプレビュー（レンダリング）
 - モバイル対応
-
----
-
-## Local Development
-
-- README.md を作成し、「## Local Development」セクションの中にローカルでの開発について手順をまとめる。
-- 環境構築はdirenv + nix flake
-
----
-
-## ドキュメント整備
-
-- README.mdを作成。セクションは
-  - Download
-    - Nix
-    - homebrew
-  - Usage
-- Usageセクションはスクリーンショットつきで解説する。
