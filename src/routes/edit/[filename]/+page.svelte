@@ -9,7 +9,7 @@
   import { extractBody, parseTags } from '$lib/utils/frontmatter';
   import { formatDisplayDate } from '$lib/utils/date-utils';
 
-  let editor: Editor;
+  let editor: Editor | undefined = $state();
   let content = $state('');
   let loading = $state(true);
   let error = $state<string | null>(null);
