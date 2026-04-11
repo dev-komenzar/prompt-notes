@@ -102,7 +102,7 @@ graph TB
     NotesAPI -->|"invoke()"| Invoke
     Invoke --> Storage
 
-    NoteCard -->|"カードクリック"| RouterNav["goto('/edit/:filename')<br/>module:editor へ遷移"]
+    NoteCard -->|"カードクリック"| RouterNav["goto('/edit?focus=:filename')<br/>module:editor へ遷移"]
 
     style NotesAPI fill:#4caf50,stroke:#2e7d32,color:#fff
     style Invoke fill:#ff9800,stroke:#e65100,color:#000
@@ -174,7 +174,7 @@ stateDiagram-v2
     [*] --> GridView: アプリ起動（/ ルート）
 
     GridView --> GridView: フィルタ変更 / 検索実行
-    GridView --> EditorView: カードクリック → /edit/:filename
+    GridView --> EditorView: カードクリック → /edit?focus=:filename
     GridView --> DeleteConfirm: 削除ボタンクリック
     DeleteConfirm --> GridView: キャンセル
     DeleteConfirm --> GridView: 削除実行 → 一覧再取得
@@ -190,7 +190,7 @@ stateDiagram-v2
     }
 ```
 
-**遷移の所有権**: カードクリックによるエディタ画面（`/edit/:filename`）への遷移は `module:grid` の `NoteCard` コンポーネントが発火する。遷移先の `/edit/:filename` ルートは `module:editor` が所有し、`filename` パラメータ（`YYYY-MM-DDTHHMMSS.md` 形式）を受け取って `read_note` コマンドでノート内容を取得する。`module:grid` は遷移先のエディタロジックには一切関与しない。
+**遷移の所有権**: カードクリックによるエディタ画面（`/edit?focus=:filename`）への遷移は `module:grid` の `NoteCard` コンポーネントが発火する。遷移先の `/edit` ルート（`module:editor` 所有）はノートフィード全体を表示する単一ルートであり、`focus` クエリパラメータで初期フォーカス対象ノートを指定する。`NoteFeed` は `list_notes` でフィードを初期ロード後、`focus` 指定ノートを先頭付近に配置して `read_note` でそのノートの内容を取得する。`module:grid` は遷移先のエディタロジック・フィード構築・フォーカス処理には一切関与しない。
 
 削除フローでは、`NoteCard` 上の削除ボタンが `DeleteConfirmDialog` を表示し、ユーザー確認後に `delete_note` コマンドを発行する。削除完了後は `search_notes`（現在のフィルタパラメータ）を再発行して一覧を更新する。
 
@@ -207,7 +207,7 @@ flowchart LR
         TagBadge["タグバッジ表示"]
         DateLabel["作成日時ラベル"]
         Preview["本文プレビュー表示"]
-        ClickArea["クリック領域 → /edit/:filename"]
+        ClickArea["クリック領域 → /edit?focus=:filename"]
         DelBtn["削除ボタン"]
     end
 
@@ -235,7 +235,7 @@ flowchart LR
 | Masonry レイアウト表示 | Pinterest スタイルの可変高カードレイアウト。CSS Grid または専用ライブラリによる実装。 | NNC-G1 |
 | フィルタリング UI | 日付範囲選択、タグ選択、全文検索テキスト入力の各 UI コンポーネント提供。 | NNC-G2 |
 | デフォルトフィルタ適用 | 初回表示時に直近 7 日間のフィルタを自動適用。 | NNC-G1 |
-| カードクリック遷移 | `NoteCard` クリック時に `/edit/:filename` へ SvelteKit ルーター遷移を発火。 | NNC-G3 |
+| カードクリック遷移 | `NoteCard` クリック時に `/edit?focus=:filename` へ SvelteKit ルーター遷移を発火。 | NNC-G3 |
 | 削除確認 UI | 削除ボタン押下時の確認ダイアログ表示、確認後に `delete_note` コマンド発行。 | — |
 | 検索デバウンス | `SearchBar` 入力のデバウンス（300ms）管理。 | — |
 
@@ -265,7 +265,7 @@ flowchart LR
 
 `module:grid` と `module:editor` の間の唯一のインタラクションはカードクリックによる画面遷移である。
 
-- **遷移方向**: `module:grid` → `module:editor`（一方向）。`NoteCard` クリック時に SvelteKit の `goto('/edit/:filename')` を呼び出す。
+- **遷移方向**: `module:grid` → `module:editor`（一方向）。`NoteCard` クリック時に SvelteKit の `goto('/edit?focus=:filename')` を呼び出す。
 - **受け渡しデータ**: URL パラメータ `:filename`（`YYYY-MM-DDTHHMMSS.md` 形式）のみ。ノートの内容やメタデータは遷移先の `module:editor` が `read_note` コマンドで独立取得する。
 - **戻り遷移**: エディタ画面からグリッドビューへの戻り遷移時、`module:grid` は `search_notes` を再発行してデータを最新化する。自動保存で更新されたタグや本文の変更が反映される。
 
@@ -317,7 +317,7 @@ Pinterest スタイルの可変高カードレイアウトを CSS Grid で実装
 | 作成日時 | `created_at` | 人間可読形式（例: `2026-04-10 09:15`）でフォーマット。フォーマット処理はフロントエンド側で実行。 |
 | 削除ボタン | — | カード右上にアイコンボタン配置。クリック時に `DeleteConfirmDialog` を表示。 |
 
-カード全体がクリック領域であり、クリック時に `/edit/:filename` へ遷移する（NNC-G3 準拠）。削除ボタンのクリックイベントは `stopPropagation()` でカードクリックへの伝播を防止する。
+カード全体がクリック領域であり、クリック時に `/edit?focus=:filename` へ遷移する（NNC-G3 準拠）。削除ボタンのクリックイベントは `stopPropagation()` でカードクリックへの伝播を防止する。
 
 ### 4.2 フィルタリング・検索 UI 設計（NNC-G2 準拠）
 
@@ -397,13 +397,13 @@ pub async fn search_notes(
 import { goto } from '$app/navigation';
 
 function handleCardClick(filename: string) {
-  goto(`/edit/${encodeURIComponent(filename)}`);
+  goto(`/edit?focus=${encodeURIComponent(filename)}`);
 }
 ```
 
-- 遷移先: `/edit/:filename`（`module:editor` 所有のルート）。
+- 遷移先: `/edit?focus=:filename`（`module:editor` 所有のルート）。
 - パラメータ: `filename`（`YYYY-MM-DDTHHMMSS.md` 形式、`NoteMetadata.filename` の値）。
-- 遷移先の `module:editor` は `filename` を用いて `read_note` コマンドを独立発行する。`module:grid` から `module:editor` へのノートデータの直接受け渡しは行わない。
+- 遷移先の `module:editor` は `NoteFeed` 初期ロードで `list_notes` を発行し、`focus` 指定の `filename` を用いて該当 `NoteBlock` の `read_note` を独立発行する。`module:grid` から `module:editor` へのノートデータの直接受け渡しは行わない。
 
 ### 4.6 削除フローの実装
 
@@ -462,7 +462,7 @@ export const gridFilter = writable<SearchParams>({
 | 全文検索 | E2E (Playwright) | 検索テキスト入力後 300ms のデバウンス経過後に `search_notes` が発行され、結果がカードとして表示される |
 | タグフィルタ | E2E (Playwright) | タグ選択時にフィルタ結果が更新され、選択タグを含むノートのみ表示される |
 | 日付フィルタ | E2E (Playwright) | 日付範囲変更時にフィルタ結果が更新される |
-| カードクリック遷移 | E2E (Playwright) | カードクリック時に `/edit/:filename` へ遷移し、エディタ画面が表示される |
+| カードクリック遷移 | E2E (Playwright) | カードクリック時に `/edit?focus=:filename` へ遷移し、エディタ画面が表示される |
 | 削除確認ダイアログ | E2E (Playwright) | 削除ボタンクリックで確認ダイアログが表示され、確認後にカードが消去される |
 | 空結果表示 | E2E (Playwright) | 検索結果 0 件時に空状態メッセージが表示される |
 | IPC 境界違反なし | E2E (Playwright) | `fetch` / `XMLHttpRequest` の不在確認（ネットワーク通信禁止） |

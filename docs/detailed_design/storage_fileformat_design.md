@@ -236,7 +236,7 @@ pub struct NoteMetadata {
 
 ### 3.5 ファイル名の不変性保証
 
-ファイル名（`YYYY-MM-DDTHHMMSS.md`）はノート作成時に `module:storage` が生成し、以後変更されない。`module:storage` にリネーム API は存在しない。この不変性により、ファイル名がノートの一意識別子として機能し、フロントエンドのルーティングパラメータ（`/edit/:filename`）と直接対応する。
+ファイル名（`YYYY-MM-DDTHHMMSS.md`）はノート作成時に `module:storage` が生成し、以後変更されない。`module:storage` にリネーム API は存在しない。この不変性により、ファイル名がノートの一意識別子として機能し、`module:editor` のノートフィードにおける `NoteBlock` の一意キーおよび `/edit?focus=:filename` クエリパラメータの値と直接対応する。
 
 ## 4. Implementation Implications
 
