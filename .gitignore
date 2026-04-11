@@ -23,6 +23,7 @@ Thumbs.db
 
 # Nix/direnv
 .direnv/
+result
 
 # Test
 test-results/
