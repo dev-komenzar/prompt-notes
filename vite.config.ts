@@ -1,5 +1,5 @@
 import { sveltekit } from '@sveltejs/kit/vite';
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   plugins: [sveltekit()],
@@ -8,5 +8,10 @@ export default defineConfig({
     port: 1420,
     strictPort: true
   },
-  envPrefix: ['VITE_', 'TAURI_']
+  envPrefix: ['VITE_', 'TAURI_'],
+  test: {
+    environment: 'jsdom',
+    include: ['tests/unit/**/*.test.ts'],
+    exclude: ['tests/unit/_pending/**'],
+  },
 });

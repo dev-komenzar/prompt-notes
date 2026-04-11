@@ -50,6 +50,23 @@
           '';
         };
 
+        tauri-driver = pkgs.rustPlatform.buildRustPackage rec {
+          pname = "tauri-driver";
+          version = "2.0.5";
+          src = pkgs.fetchFromGitHub {
+            owner = "tauri-apps";
+            repo = "tauri";
+            rev = "tauri-driver-v${version}";
+            hash = "sha256-6QTFq7v1BmBJ4KNPkek02VQQdaSIMpcuYk/aC/hQu/o=";
+          };
+          cargoHash = "sha256-zeeEvSKACQPzK0B8u1uODP+m2EAlFtk73WwkYp/ggg4=";
+          buildAndTestSubdir = "crates/tauri-driver";
+          meta = with pkgs.lib; {
+            description = "WebDriver server for Tauri applications";
+            license = licenses.asl20;
+          };
+        };
+
         promptnotes = pkgs.rustPlatform.buildRustPackage {
           pname = "promptnotes";
           version = "0.1.0";
@@ -107,6 +124,9 @@
             rustToolchain
             pkgs.nodejs_20
             pkgs.cargo-tauri
+            # E2E testing: WebKitWebDriver is in webkitgtk_4_1
+            pkgs.xvfb-run
+            tauri-driver
           ];
 
           PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig:${pkgs.glib.dev}/lib/pkgconfig:${pkgs.webkitgtk_4_1.dev}/lib/pkgconfig";
