@@ -1,6 +1,35 @@
 ## 基本的な開発手法
 
-[CoDD](https://github.com/yohey-w/codd-dev/blob/main/README.md)を利用している。
+[CoDD](https://github.com/yohey-w/codd-dev/blob/main/README.md) (Coherence-Driven Development) を利用している。上流 (requirements) が下流 (design → code → test) を一方向に決定し、変更時は依存グラフで影響範囲を追跡するハーネス非依存の方法論。
+
+### グリーンフィールドワークフロー
+
+新規プロジェクトは以下のコマンドを順に実行する。各 artifact は Markdown frontmatter の `depends_on` で依存関係を宣言し、CoDD が依存グラフを管理する。
+
+1. `codd init --requirements <file>` — requirements を取り込んで初期化
+2. `codd plan --init` — AI が wave_config (設計書の依存グラフ) を生成
+3. `codd generate --wave N` — Wave 順に設計書を生成 (下記参照)
+4. `codd validate` — frontmatter 整合性と TODO/プレースホルダ検出
+5. `codd implement --sprint N` — 設計書から Sprint 単位でコード生成
+6. `codd assemble` — コード断片を buildable なプロジェクトに組み立て
+
+### Wave 構成 (設計書の依存順)
+
+| Wave | 内容 | 依存元 |
+|---|---|---|
+| 1 | 受入基準 + ADR | requirements |
+| 2 | システム設計 | req + Wave 1 |
+| 3 | DB 設計 + API 設計 | req + Wave 1-2 |
+| 4 | UI/UX 設計 | req + Wave 1-3 |
+| 5 | 実装計画 | 全上流 |
+
+検証は V-Model で下から積み上げる: Unit (詳細設計) → Integration (システム設計) → E2E (requirements + 受入基準)。
+
+### 変更時の追従
+
+- requirements/設計書を編集 → `codd impact` で影響範囲を Green/Amber/Gray で分類 → 影響を受けた Wave を `codd generate --wave N --force` で再生成
+- ソースコードを編集 → `codd propagate` で CEG グラフを辿って影響する設計書を特定 → `--update` で AI が設計書を追従更新
+- `codd scan` で依存グラフを再構築 (Edit/Write 時に hook で自動実行するのが推奨)
 
 ## コミット
 
