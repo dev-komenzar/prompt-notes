@@ -51,16 +51,19 @@
     <input
       type="text"
       class="search-input"
+      data-testid="search-input"
+      aria-label="ノートを検索"
       placeholder="ノートを検索..."
       value={state.searchQuery}
       oninput={handleInput}
     />
   </div>
 
-  <div class="date-filters">
+  <div class="date-filters" data-testid="date-filter">
     <input
       type="date"
       class="date-input"
+      aria-label="日付フィルタ開始"
       value={state.dateFrom}
       onchange={handleDateFromChange}
     />
@@ -68,6 +71,7 @@
     <input
       type="date"
       class="date-input"
+      aria-label="日付フィルタ終了"
       value={state.dateTo}
       onchange={handleDateToChange}
     />

@@ -20,7 +20,14 @@
   }
 </script>
 
-<button class="copy-button" onclick={handleCopy} title="本文をコピー" type="button">
+<button
+  class="copy-button"
+  data-testid="copy-button"
+  aria-label="本文をコピー"
+  onclick={handleCopy}
+  title="本文をコピー"
+  type="button"
+>
   {copied ? '✓ コピー済み' : '📋 コピー'}
 </button>
 

@@ -29,7 +29,7 @@
 
 <TopBar title="設定" showBack />
 
-<main class="settings-page">
+<main class="settings-page" data-testid="settings-screen">
   {#if settingsState.loading}
     <div class="loading">読み込み中...</div>
   {:else if settingsState.error}
@@ -42,6 +42,8 @@
           id="notes-dir"
           type="text"
           class="form-input"
+          data-testid="notes-dir-display"
+          aria-label="ノート保存先ディレクトリ"
           bind:value={notesDir}
           placeholder="~/promptnotes"
         />

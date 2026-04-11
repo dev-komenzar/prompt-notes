@@ -9,7 +9,7 @@
   let { children }: Props = $props();
 </script>
 
-<div class="app-shell">
+<div class="app-shell" data-testid="app-root">
   {@render children()}
 </div>
 

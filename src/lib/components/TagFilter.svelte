@@ -35,7 +35,7 @@
 </script>
 
 {#if allTags().length > 0}
-  <div class="tag-filter">
+  <div class="tag-filter" data-testid="tag-filter" aria-label="tag filter">
     {#each allTags() as tag}
       <button
         class="tag-chip"

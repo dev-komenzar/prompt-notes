@@ -31,7 +31,13 @@
 <header class="top-bar">
   <div class="top-bar-left">
     {#if showBack}
-      <button class="top-btn" onclick={handleBack} title="戻る" type="button">
+      <button
+        class="top-btn"
+        onclick={handleBack}
+        title="戻る"
+        data-testid="nav-grid"
+        type="button"
+      >
         ← 戻る
       </button>
     {/if}
@@ -39,12 +45,24 @@
   </div>
   <div class="top-bar-right">
     {#if showNew}
-      <button class="top-btn new-btn" onclick={handleNew} title="新規ノート (Cmd+N)" type="button">
+      <button
+        class="top-btn new-btn"
+        onclick={handleNew}
+        title="新規ノート (Cmd+N)"
+        data-testid="nav-editor"
+        type="button"
+      >
         ＋ 新規
       </button>
     {/if}
     {#if showSettings}
-      <button class="top-btn" onclick={handleSettings} title="設定" type="button">
+      <button
+        class="top-btn"
+        onclick={handleSettings}
+        title="設定"
+        data-testid="nav-settings"
+        type="button"
+      >
         ⚙
       </button>
     {/if}

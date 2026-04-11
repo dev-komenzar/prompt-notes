@@ -31,7 +31,14 @@
   }
 </script>
 
-<div class="note-card" onclick={handleOpen} onkeydown={(e) => e.key === 'Enter' && handleOpen()} role="button" tabindex="0">
+<div
+  class="note-card"
+  data-testid="note-card"
+  onclick={handleOpen}
+  onkeydown={(e) => e.key === 'Enter' && handleOpen()}
+  role="button"
+  tabindex="0"
+>
   <div class="card-header">
     <time class="card-date">{formatDisplayDate(note.filename)}</time>
     <div class="card-actions">

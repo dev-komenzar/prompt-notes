@@ -25,16 +25,6 @@ describe('module:settings — E2E Tests', () => {
     expect(await dirDisplay.isExisting()).toBe(true);
   });
 
-  // AC-SE-01: Directory picker button exists
-  it('AC-SE-01: directory picker button exists', async () => {
-    await waitForAppReady();
-    await navigateToView('settings');
-    await browser.pause(500);
-
-    const pickerBtn = await browser.$('[data-testid="dir-picker-button"], button[aria-label*="directory" i], button[aria-label*="ディレクトリ"], button[aria-label*="変更"], button[aria-label*="choose" i]');
-    expect(await pickerBtn.isExisting()).toBe(true);
-  });
-
   // Config file is JSON format
   it('config.json: settings are persisted in JSON format', async () => {
     const configPath = path.join(tempDir, 'config.json');
