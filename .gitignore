@@ -5,6 +5,7 @@ node_modules/
 dist/
 .svelte-kit/
 build/
+src/generated/sn
 
 # Tauri build output
 src-tauri/target/
