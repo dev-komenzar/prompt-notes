@@ -2,7 +2,6 @@
 codd:
   node_id: design:system-design
   type: design
-  modules: [lib]
   depends_on:
   - id: test:acceptance_criteria
     relation: constrained_by
@@ -38,255 +37,335 @@ codd:
 
 ## 1. Overview
 
-PromptNotes は、AI へ渡すプロンプトを素早く書き溜めるためのローカルデスクトップノートアプリである。タイトル不要・本文即記録・グリッド振り返りをコンセプトとし、すべてのデータをローカル `.md` ファイルとして管理する。
+PromptNotes は AI へ渡すプロンプトを素早く書き溜めるローカルデスクトップノートアプリである。タイトル不要・本文即記・グリッド振り返りを設計思想とし、ターミナルや IDE へプロンプトをペーストする用途に特化する。
 
-### コンセプト
+### 技術スタック
 
-ユーザーはターミナルや IDE で AI を利用する際のプロンプトを PromptNotes に蓄積し、1 クリックでクリップボードにコピーして再利用する。AI 呼び出し・クラウド同期・モバイル対応は意図的にスコープ外とし、軽量性とプライバシーを最優先する。
-
-### 対象プラットフォーム
-
-- **Linux** — バイナリ直接ダウンロード、Flatpak（Flathub）、NixOS パッケージ
-- **macOS** — バイナリ直接ダウンロード、Homebrew Cask
-- **Windows** — 将来対応。現時点ではスコープ外。
-
-### Non-negotiable conventions への適合
-
-本設計書は以下のリリース不可制約に準拠する。すべてのアーキテクチャ決定はこれらを前提とし、違反する設計変更はリリースブロッカーとなる。
-
-| 制約 | 対象 | 本設計書での反映箇所 |
+| レイヤー | 技術 | 備考 |
 |---|---|---|
-| Tauri（Rust + WebView）アーキテクチャ必須。フロントエンド↔Rust バックエンド間は Tauri IPC 経由。 | `framework:tauri`, `module:shell` | アーキテクチャ全体が Tauri v2 を前提として設計。IPC コマンド定義を「バックエンド層」に明示。 |
-| データはローカル `.md` ファイルのみ。クラウド同期・DB 利用は禁止。AI 呼び出し機能の実装も禁止。 | `module:storage` | ストレージ層でファイルシステム直接操作のみを規定。SQLite・Tantivy 等のデータベース/インデックスエンジンを排除。ネットワーク通信を行う機能を一切含まない。 |
-| Linux・macOS 対応必須。Windows は将来対応としスコープ外。 | `platform:linux`, `platform:macos` | ビルド・配布パイプラインを Linux/macOS の 2 プラットフォームで設計。デフォルトパスを OS ごとに定義。 |
-| Cmd+N / Ctrl+N 即時新規ノート作成および 1 クリックコピーボタンはコア UX であり、未実装ならリリース不可。新規ノート編集中でも Cmd+N / Ctrl+N で追加の新規ノートを作成できる必要がある。 | `module:editor` | エディタモジュール設計にキーバインド処理とコピーボタンコンポーネントを必須要素として含める。`Cmd+N` ハンドラは現在の画面状態に依存せずグローバルに動作する。 |
-| エディタ画面は過去のノートをインラインリストとして表示し、選択した過去ノートをその場で編集できる。 | `module:editor` | エディタモジュールに「ノートフィード（scrollable list of past notes）」を必須コンポーネントとして含める。各ノートブロックが frontmatter 領域と本文領域を持ち、独立した自動保存を行う。 |
-| CodeMirror 6 必須。タイトル入力欄禁止・Markdown プレビュー（レンダリング）禁止。 | `module:editor` | エディタエンジンを CodeMirror 6 に固定。タイトル入力欄およびレンダリング機能を禁止事項として明記。 |
-| ファイル名規則 `YYYY-MM-DDTHHMMSS.md` および自動保存は確定済み。 | `module:storage` | ストレージ層のファイル命名ロジックとオートセーブ機構を必須として設計。 |
-| デフォルト直近 7 日間フィルタ・タグ/日付フィルタ・全文検索は必須機能。 | `module:grid` | グリッドビューモジュールにフィルタリングパイプラインと全走査検索を組み込む。 |
+| アプリケーションフレームワーク | Tauri v2（Rust + OS WebView） | RBC-1: Electron 等への変更はリリース不可 |
+| フロントエンド | Svelte（SPA） | コンパイル時最適化、仮想 DOM 不使用 |
+| エディタエンジン | CodeMirror 6 | RBC-2: Monaco 等への変更はリリース不可 |
+| データ永続化 | ローカル `.md` ファイル | RBC-3: DB・クラウド保存は禁止 |
+| 検索方式 | Rust によるファイル全走査 | インデックス不要（想定数十件/週） |
 
-### プライバシー・データ取り扱い
+### ターゲットプラットフォーム
 
-すべてのノートデータはユーザーのローカルファイルシステムにのみ保存される。PromptNotes はネットワーク通信を一切行わない。クラウド同期機能は Non-negotiable convention により禁止されており、外部サーバーへのデータ送信経路は設計上存在しない。ユーザーが Git 等の外部ツールで同期を行うことは妨げない。
+Linux および macOS を対象とする。Windows は将来対応としスコープ外である。フロントエンド↔Rust バックエンド間の通信はすべて Tauri IPC（`invoke`）経由で行う。
+
+### スコープ外の明示的排除
+
+以下の機能は実装禁止であり、混入した場合リリース不可となる。
+
+- AI 呼び出し機能
+- クラウド同期機能
+- タイトル入力欄
+- Markdown レンダリングプレビュー
+- モバイル対応
+
+### リリースブロッキング制約の準拠
+
+本設計書は以下の制約をアーキテクチャ全体で遵守する。
+
+| ID | 対象 | 制約 | 本設計書での反映箇所 |
+|---|---|---|---|
+| RBC-1 | `framework:tauri` | Tauri（Rust + WebView）アーキテクチャ必須 | プロセスモデル、IPC 設計、配布方式すべてが Tauri 前提 |
+| RBC-2 | `module:editor` | CodeMirror 6 必須。タイトル入力欄禁止。Markdown プレビュー禁止 | エディタモジュール設計で CodeMirror 6 拡張のみ使用 |
+| RBC-3 | `module:storage` | ファイル名規則 `YYYY-MM-DDTHHMMSS.md` および自動保存は確定済み | ストレージモジュール設計でファイル I/O のみ使用 |
+| RB-1 | `module:editor` | Cmd+N / Ctrl+N 即時新規ノート作成および 1 クリックコピーボタン | エディタモジュールのキーバインド設計・コピー機能設計 |
+| RB-4 | `module:grid` | デフォルト直近 7 日間フィルタ・タグ/日付フィルタ・全文検索 | グリッドモジュールのフィルタ・検索設計 |
 
 ---
 
 ## 2. Architecture
 
-### 2.1 レイヤー構成
+### 2.1 プロセスモデル
 
-PromptNotes は Tauri v2 の標準アーキテクチャに従い、3 層で構成する。
+Tauri アプリケーションは 2 つのプロセスで構成される。
 
 ```
-┌──────────────────────────────────────────────────┐
-│  フロントエンド層（Svelte + CodeMirror 6）        │
-│  OS ネイティブ WebView 上でレンダリング           │
-├──────────────────────────────────────────────────┤
-│  Tauri IPC 層                                    │
-│  invoke() / listen() によるコマンド・イベント通信  │
-├──────────────────────────────────────────────────┤
-│  バックエンド層（Rust）                           │
-│  ファイル I/O・パス解決・検索・設定管理            │
-└──────────────────────────────────────────────────┘
-       │
-       ▼
-  ローカルファイルシステム（.md ファイル群）
+┌─────────────────────────────────────────────────┐
+│  Tauri Core Process (Rust)                      │
+│                                                 │
+│  ┌───────────┐  ┌───────────┐  ┌─────────────┐ │
+│  │ storage   │  │ search    │  │ config      │ │
+│  │ module    │  │ module    │  │ module      │ │
+│  └───────────┘  └───────────┘  └─────────────┘ │
+│         ▲              ▲              ▲         │
+│         │     Tauri IPC (invoke)      │         │
+│         ▼              ▼              ▼         │
+│  ┌─────────────────────────────────────────┐    │
+│  │  WebView Process (OS WebView)           │    │
+│  │                                         │    │
+│  │  ┌───────────┐  ┌──────────────────┐    │    │
+│  │  │ Svelte    │  │ CodeMirror 6     │    │    │
+│  │  │ SPA       │  │ Editor Instance  │    │    │
+│  │  └───────────┘  └──────────────────┘    │    │
+│  └─────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────┘
 ```
 
-**フロントエンド↔バックエンド間の通信はすべて Tauri IPC 経由で行う。** フロントエンドから直接ファイルシステムにアクセスすることは行わず、Rust 側の `#[tauri::command]` で定義されたコマンドを `invoke()` で呼び出す。
+- **Tauri Core Process（Rust）**: ファイルシステム操作、検索、設定管理を担当する。WebView からの `invoke` 呼び出しに応答する。
+- **WebView Process**: Svelte SPA が動作し、CodeMirror 6 によるエディタ UI とグリッドビュー UI を提供する。Rust バックエンドとの通信はすべて Tauri IPC 経由で行い、直接のファイルシステムアクセスは行わない。
 
 ### 2.2 モジュール構成
 
-#### module:shell — Tauri アプリケーションシェル
+#### 2.2.1 Rust バックエンド（`src-tauri/src/`）
 
-Tauri v2 アプリケーションのエントリポイント。ウィンドウ管理、IPC ハンドラ登録、アプリケーションライフサイクルを管理する。
+| モジュール | 責務 | 主要 Tauri コマンド |
+|---|---|---|
+| `storage` | ノートファイルの CRUD、ディレクトリ自動作成、ファイル名生成 | `create_note`, `save_note`, `read_note`, `delete_note`, `list_notes` |
+| `search` | ファイル全走査による全文検索、タグフィルタ、日付フィルタ | `search_notes`, `filter_by_tags`, `filter_by_date_range` |
+| `config` | 保存ディレクトリ設定の読み書き | `get_config`, `set_config` |
 
-- **配置**: `src-tauri/src/main.rs` および `src-tauri/src/lib.rs`
-- **責務**:
-  - Tauri `Builder` によるアプリ初期化
-  - `#[tauri::command]` ハンドラの登録
-  - ウィンドウ作成（単一ウィンドウ）
-  - グローバルキーボードショートカット（Cmd+N / Ctrl+N）のフォワーディング
+#### 2.2.2 Svelte フロントエンド（`src/`）
 
-#### module:editor — エディタ画面
+| モジュール | 責務 | 主要コンポーネント |
+|---|---|---|
+| `editor` | ノート編集、新規作成、コピー機能、frontmatter 編集 | `EditorView.svelte`, `NoteList.svelte`, `FrontmatterBar.svelte`, `CopyButton.svelte` |
+| `grid` | Pinterest スタイルカード表示、フィルタ UI、検索 UI | `GridView.svelte`, `NoteCard.svelte`, `FilterBar.svelte`, `SearchInput.svelte` |
+| `settings` | 保存ディレクトリ変更 UI | `SettingsView.svelte` |
+| `stores` | Svelte ストアによるアプリケーション状態管理 | `notes.ts`, `filters.ts`, `config.ts` |
 
-CodeMirror 6 ベースのノート編集画面。エディタ画面は **ノートフィード**（feed of notes）として機能し、現在編集中のノートに加えて過去のノートをスクロール可能なリストとして同時に表示する。
+### 2.3 画面構成とルーティング
 
-- **配置**: `src/lib/components/editor/` 配下の Svelte コンポーネント群
-- **エディタエンジン**: CodeMirror 6（変更不可）
-  - Markdown シンタックスハイライト: `@codemirror/lang-markdown` パッケージ
-  - プレーンテキスト表示のみ。Markdown レンダリング（`<h1>`, `<strong>` 等の HTML 要素生成）は禁止。
-- **画面構成**:
-  - **ノートフィード**: エディタ画面の中心領域。複数のノートブロックを縦方向にスクロール可能なリストとして表示する。各ノートブロックは独立した frontmatter 領域（タグ入力）と本文エディタ領域（CodeMirror 6 インスタンス）を持ち、クリックまたはフォーカスでその場編集が可能。新しいノートほど先頭に表示される。初期表示件数とスクロール/ページング方針は詳細設計で定義する。
-  - **frontmatter 領域**（各ノートブロック内）: タグ入力 UI。背景色を本文領域と異なる色に設定し視覚的に区別する。YAML `tags` フィールドのみを保持。
-  - **本文エディタ領域**: CodeMirror 6 インスタンス。タイトル入力欄（`<input>` / `<textarea>`）は設置禁止。
-  - **コピーボタン**: 各ノートブロックに 1 クリックでそのノート本文（frontmatter を除く）をクリップボード API 経由でコピーするボタンを設置。コア UX であり必須。
-- **キーバインド**:
-  - `Cmd+N`（macOS）/ `Ctrl+N`（Linux）: 新規ノート作成。Rust バックエンドに `create_note` コマンドを発行し、作成完了後に新規ノートをフィード先頭に挿入してフォーカスを移動する。**新規ノート編集中であっても、現在の画面状態に関係なく常に追加の新規ノートを作成できる**（再入可能）。
-- **自動保存**: ユーザーの明示的な保存操作は不要。フィード内の各ノートブロックは独立したデバウンスキューを持ち、テキスト変更イベントをデバウンスして該当ノートの `save_note` コマンドを自動発行する。あるノートを編集中に別のノートへフォーカスを移しても、編集済みノートの保存は独立して完了する。
+Svelte SPA 内で 3 つの画面を持つ。ルーティングは `svelte-spa-router` または同等の軽量ルーターで実装する。
 
-#### module:grid — グリッドビュー
+| パス | 画面 | 説明 |
+|---|---|---|
+| `/` | エディタ画面 | デフォルト画面。新規ノート作成と過去ノートリスト表示・編集 |
+| `/grid` | グリッドビュー | Pinterest スタイルカードによるノート一覧と検索・フィルタ |
+| `/settings` | 設定画面 | 保存ディレクトリの変更 |
 
-ノート一覧の表示・検索・フィルタリング画面。
+### 2.4 Tauri IPC コマンド設計
 
-- **配置**: `src/lib/components/grid/` 配下の Svelte コンポーネント群
-- **レイアウト**: Pinterest スタイルの可変高カード（Masonry レイアウト）
-- **フィルタリングパイプライン**:
-  1. **デフォルトフィルタ**: 直近 7 日間のノートのみ表示（初期状態）。7 日前のノートは含まれ、8 日前は含まれない。
-  2. **タグフィルタ**: frontmatter の `tags` フィールドに基づくフィルタリング。
-  3. **日付フィルタ**: ファイル名のタイムスタンプに基づく日付範囲指定。
-  4. **全文検索**: ファイル全走査方式。Rust バックエンドの `search_notes` コマンドで実行。
-- **性能目標**: 直近 7 日間のノート（数十件規模）に対する検索は 100ms 以内で完了。
-- **カード操作**: カードクリックでエディタ画面に遷移し、該当ノートの内容を表示。
+フロントエンドから Rust バックエンドへの呼び出しはすべて `@tauri-apps/api/core` の `invoke` 関数を使用する。以下に主要コマンドのインターフェースを定義する。
 
-#### module:storage — ストレージ
+```typescript
+// ノート操作
+invoke<NoteMetadata>('create_note')
+// → 新規ファイル YYYY-MM-DDTHHMMSS.md を作成し、メタデータを返す
 
-ローカルファイルシステム上の `.md` ファイル管理。データベースおよびクラウドストレージの利用は禁止。
+invoke<void>('save_note', { id: string, frontmatter: { tags: string[] }, body: string })
+// → 指定ノートの内容をファイルに上書き保存
 
-- **配置**: `src-tauri/src/storage/` 配下の Rust モジュール群
-- **ファイル名規則**: `YYYY-MM-DDTHHMMSS.md`（例: `2026-04-04T143205.md`）。ノート作成時刻で確定し、以降変更しない。正規表現: `^\d{4}-\d{2}-\d{2}T\d{6}\.md$`
-- **ファイル構造**:
-  ```
-  ---
-  tags: [gpt, coding]
-  ---
+invoke<Note>('read_note', { id: string })
+// → 指定ノートの frontmatter + body を返す
 
-  本文をここに書く...
-  ```
-  - frontmatter は YAML 形式。`tags` キーのみ。`tags` 以外のメタデータフィールドの自動挿入は禁止。
-  - 作成日はファイル名から取得する（frontmatter に `date` 等を持たない）。
-- **デフォルト保存ディレクトリ**:
-  - Linux: `~/.local/share/promptnotes/notes/`
-  - macOS: `~/Library/Application Support/promptnotes/notes/`
-- **ディレクトリ変更**: 設定画面から任意のパスに変更可能。Obsidian vault 内のサブディレクトリを指定する運用を想定。
-- **検索方式**: ファイル全走査。インデックスエンジン（Tantivy、SQLite FTS 等）は導入しない。
+invoke<void>('delete_note', { id: string })
+// → 指定ノートファイルを削除
 
-#### module:settings — 設定画面
+invoke<NoteMetadata[]>('list_notes', { filter?: NoteFilter })
+// → フィルタ条件に合致するノートのメタデータ一覧を返す
 
-- **配置**: `src/lib/components/settings/` 配下の Svelte コンポーネント
-- **設定項目**: 保存ディレクトリパスの変更
-- **永続化**: 設定値は Tauri の標準設定ファイルパスに JSON 形式で保存（ノートデータとは別管理）
+// 検索・フィルタ
+invoke<NoteMetadata[]>('search_notes', { query: string, filter?: NoteFilter })
+// → 全文検索 + フィルタ条件に合致するノートを返す
 
-### 2.3 Tauri IPC コマンド設計
+// 設定
+invoke<AppConfig>('get_config')
+invoke<void>('set_config', { config: AppConfig })
+```
 
-フロントエンドから Rust バックエンドへの呼び出しは以下の `#[tauri::command]` で定義する。コマンド定義は `src-tauri/src/` 配下に配置する。
-
-| コマンド名 | 引数 | 戻り値 | 責務 |
-|---|---|---|---|
-| `create_note` | なし | `{ filename: string, path: string }` | 新規 `.md` ファイルを作成。ファイル名はコマンド実行時刻から生成。 |
-| `save_note` | `{ filename: string, frontmatter: { tags: string[] }, body: string }` | `{ success: bool }` | 指定ノートの内容を上書き保存。自動保存から呼び出される。 |
-| `read_note` | `{ filename: string }` | `{ frontmatter: { tags: string[] }, body: string }` | 指定ノートの内容を読み取り。 |
-| `list_notes` | `{ days: number?, tags: string[]?, date_from: string?, date_to: string? }` | `{ notes: NoteMetadata[] }` | フィルタ条件に合致するノート一覧を返却。デフォルト `days=7`。 |
-| `search_notes` | `{ query: string, days: number?, tags: string[]? }` | `{ notes: NoteMetadata[] }` | 全文検索。ファイル全走査で本文にクエリ文字列を含むノートを返却。 |
-| `delete_note` | `{ filename: string }` | `{ success: bool }` | 指定ノートを削除。 |
-| `get_settings` | なし | `{ notes_dir: string }` | 現在の設定を取得。 |
-| `update_settings` | `{ notes_dir: string }` | `{ success: bool }` | 設定を更新・永続化。 |
-
-`NoteMetadata` の構造:
+**型定義:**
 
 ```typescript
 interface NoteMetadata {
-  filename: string;      // e.g. "2026-04-04T143205.md"
-  tags: string[];        // e.g. ["gpt", "coding"]
-  body_preview: string;  // 本文の先頭N文字（カード表示用）
-  created_at: string;    // ファイル名から抽出した ISO 8601 日時
+  id: string           // ファイル名（拡張子なし）例: "2026-04-04T143205"
+  tags: string[]
+  created_at: string   // ファイル名から導出した ISO 8601 日時
+  body_preview: string // 本文先頭 200 文字
+}
+
+interface Note {
+  metadata: NoteMetadata
+  body: string         // 本文全体
+}
+
+interface NoteFilter {
+  tags?: string[]           // AND 条件
+  date_from?: string        // ISO 8601 日付
+  date_to?: string          // ISO 8601 日付
+}
+
+interface AppConfig {
+  notes_dir: string    // 保存ディレクトリの絶対パス
 }
 ```
 
-### 2.4 フロントエンドルーティング
+### 2.5 ストレージ設計
 
-Svelte のファイルベースルーティング（`src/routes/`）で以下の画面を構成する。
+#### 2.5.1 ファイル名規則（RBC-3 / RB-3 準拠）
 
-| パス | 画面 | 対応モジュール |
-|---|---|---|
-| `/` | グリッドビュー（ノート一覧、Pinterest レイアウト） | `module:grid` |
-| `/edit` | エディタ画面（ノートフィード。過去ノートのインラインリストを含む） | `module:editor` |
-| `/edit?focus=:filename` | エディタ画面で指定ノートをフィード先頭付近へスクロールしフォーカス | `module:editor` |
-| `/settings` | 設定画面 | `module:settings` |
+ファイル名は `YYYY-MM-DDTHHMMSS.md` 形式に厳密に従う。タイムスタンプはノート作成時点のローカル時刻で確定し、以降変更しない。`id` はファイル名から拡張子を除いた文字列とする。
 
-エディタ画面はフィード全体を表示する単一ルートであり、個別ノートごとに異なるルートを持たない。`focus` クエリパラメータで初期フォーカス対象ノートを指定する（グリッドビューからの遷移時に使用）。
+例: `2026-04-04T143205.md` → id = `"2026-04-04T143205"`
 
-### 2.5 画面遷移フロー
+#### 2.5.2 ファイル構造
 
-```
-グリッドビュー (/)
-  │
-  ├── カードクリック ──→ エディタ画面 (/edit?focus=:filename)
-  │                         │
-  │                         ├── フィード内の任意のノートを選択 ──→ その場でインライン編集
-  │                         ├── Cmd+N / Ctrl+N ──→ 新規ノート作成 → フィード先頭に挿入しフォーカス
-  │                         │                          （新規ノート編集中も再入可能）
-  │                         └── コピーボタン ──→ 該当ノート本文をクリップボードにコピー
-  │
-  ├── Cmd+N / Ctrl+N ──→ 新規ノート作成 → エディタ画面 (/edit) の先頭に挿入しフォーカス
-  │
-  ├── フィルタ操作 ──→ グリッドビュー更新（同一画面）
-  │
-  └── 設定アイコン ──→ 設定画面 (/settings)
-                          └── 保存ディレクトリ変更 → 永続化
+```markdown
+---
+tags: [gpt, coding]
+---
+
+本文テキスト
 ```
 
-`Cmd+N` / `Ctrl+N` ハンドラはグリッドビュー・エディタ画面（新規ノート編集中を含む）・設定画面のいずれからでも同一の動作（新規ノート作成 → エディタ画面へ遷移 → 新規ノートにフォーカス）を提供する。既存の未保存編集内容は自動保存デバウンスにより保持される。
+- frontmatter は YAML 形式で `tags` フィールドのみを含む。
+- 作成日時はファイル名から取得し、frontmatter に重複保持しない。
 
-### 2.6 自動保存シーケンス
+#### 2.5.3 デフォルト保存ディレクトリ
 
-1. ユーザーが CodeMirror 6 エディタで本文またはタグを編集する。
-2. フロントエンドが変更イベントをデバウンス（待機時間の具体値はフロントエンド実装で決定、推奨 500ms〜1000ms）。
-3. デバウンス完了後、`invoke('save_note', { filename, frontmatter, body })` を Tauri IPC 経由で発行。
-4. Rust バックエンドがファイルをアトミックに書き込み（一時ファイル書き込み → rename）。
-5. 成功/失敗をフロントエンドに返却。
+| プラットフォーム | パス |
+|---|---|
+| Linux | `~/.local/share/promptnotes/notes/` |
+| macOS | `~/Library/Application Support/promptnotes/notes/` |
 
-### 2.7 ビルド・配布パイプライン
+アプリ初回起動時にディレクトリが存在しなければ `std::fs::create_dir_all` で自動作成する。設定画面から任意のディレクトリに変更可能であり、Obsidian vault 内のサブディレクトリを指定する運用をサポートする。
 
-CI/CD パイプラインは GitHub Actions で構築し、Linux および macOS の 2 プラットフォーム向けに成果物を生成する。
+#### 2.5.4 設定ファイル
 
-| プラットフォーム | 配布形式 | ビルドターゲット |
+アプリケーション設定は Tauri の `app_config_dir` 配下に `config.json` として保存する。
+
+| プラットフォーム | パス |
+|---|---|
+| Linux | `~/.config/promptnotes/config.json` |
+| macOS | `~/Library/Application Support/promptnotes/config.json` |
+
+```json
+{
+  "notes_dir": "/home/user/.local/share/promptnotes/notes"
+}
+```
+
+設定ファイルが存在しない場合はデフォルト値で自動生成する。
+
+#### 2.5.5 データアクセス制御（RBC-3 準拠）
+
+- アプリケーションは `config.json` で指定された `notes_dir` のみを読み書きする。
+- DB（SQLite / IndexedDB）へのデータ保存パスは一切存在しない。
+- クラウドストレージへの通信コードは一切存在しない。
+- AI API への通信コードは一切存在しない。
+
+### 2.6 エディタモジュール設計
+
+#### 2.6.1 CodeMirror 6 構成（RBC-2 準拠）
+
+CodeMirror 6 を唯一のエディタエンジンとして使用する。以下の拡張を組み合わせてインスタンスを構成する。
+
+| 拡張 | パッケージ | 目的 |
 |---|---|---|
-| Linux | バイナリ直接ダウンロード（`.deb`, `.AppImage`） | `tauri build` |
-| Linux | Flatpak（Flathub） | `com.promptnotes.PromptNotes.yml` マニフェスト |
-| Linux | NixOS パッケージ | `flake.nix` パッケージビルド定義 |
-| macOS | バイナリ直接ダウンロード（`.dmg`） | `tauri build` + notarization |
-| macOS | Homebrew Cask | `homebrew-cask` フォーミュラ |
+| Markdown シンタックスハイライト | `@codemirror/lang-markdown` | Markdown 構文の色分け表示 |
+| 基本セットアップ | `codemirror` (basic-setup) | キーバインド、行番号等の基本機能 |
+| テーマ | `@codemirror/theme-one-dark` 等 | エディタの外観 |
+| 更新リスナー | `@codemirror/view` の `EditorView.updateListener` | 自動保存トリガー |
 
-### 2.8 開発環境
+タイトル入力欄は実装しない（RB-2 準拠）。Markdown レンダリングプレビュー機能は実装しない（RB-2 準拠）。
 
-- **環境構築**: `direnv` + `nix flake`。`direnv allow` 後に Rust ツールチェイン、Node.js、Tauri CLI 等がすべて利用可能になる。
-- **開発サーバー**: `tauri dev`（`http://localhost:1420`）で Svelte 開発サーバーと Tauri WebView を同時起動。
-- **テストフレームワーク**: Playwright による E2E テスト。API インテグレーションテストとブラウザテストの 2 レベルに分離。テストファイルは `tests/e2e/` 配下に配置。
+#### 2.6.2 新規ノート作成（RB-1 準拠）
 
-### 2.9 スコープ外機能の排除（スコープガード）
+- macOS では Cmd+N、Linux では Ctrl+N でショートカットを発火する。
+- ショートカットは Svelte コンポーネントレベルで `window.addEventListener('keydown', ...)` により捕捉し、`invoke('create_note')` を呼び出す。
+- 新規ノート作成後、CodeMirror 6 インスタンスの `focus()` を呼び出してフォーカスを自動移動する。
+- 新規ノート作成のレイテンシ目標は 100ms 以下とする。Rust 側でのファイル作成は非同期で行い、フロントエンドは即座に空ノートの編集状態に遷移する。
 
-以下の機能は設計上排除されており、実装した場合はリリースブロッカーとなる。
+#### 2.6.3 1 クリックコピーボタン（RB-1 準拠）
 
-| 排除機能 | 理由 | 検出方法 |
+- エディタ画面にコピーボタンを配置する。
+- クリック時に `navigator.clipboard.writeText()` で本文全体（frontmatter を除く）をシステムクリップボードにコピーする。
+- コピー成功時にボタンのアイコン/テキストを一時的に変化させ（例: チェックマーク表示、2 秒後に復帰）、ユーザーにフィードバックする。
+
+#### 2.6.4 frontmatter 領域
+
+- 画面上部に frontmatter 領域を配置し、背景色（例: `bg-gray-100` / `bg-slate-800`）で本文と視覚的に区別する。
+- frontmatter 領域ではタグの入力・編集が可能である。タグは YAML 配列形式 `tags: [tag1, tag2]` で保存する。
+- frontmatter のメタデータは `tags` のみ。作成日時はファイル名から取得する。
+
+#### 2.6.5 自動保存（RB-3 準拠）
+
+- CodeMirror 6 の `EditorView.updateListener` で `docChanged` を検知し、デバウンス（500ms）後に `invoke('save_note', ...)` を呼び出す。
+- 明示的な「保存」ボタンや Cmd+S / Ctrl+S 操作は不要とする。
+- frontmatter の変更も同じ自動保存パイプラインで処理する。
+
+#### 2.6.6 ノートリスト表示
+
+- エディタ画面において、過去のノートを時系列降順（新しい順）でリスト表示する。
+- 各ノートは frontmatter のタグ領域と本文を含むカード形式で表示する。
+- リスト内のノートを選択すると、そのノートが CodeMirror 6 エディタインスタンスでインライン編集可能になる。
+
+### 2.7 グリッドモジュール設計（RB-4 準拠）
+
+#### 2.7.1 Pinterest スタイルカード表示
+
+- CSS Grid または CSS Columns による Pinterest スタイル（Masonry）レイアウトで可変高カードを表示する。
+- 各カードにはノートの本文先頭部分（プレビュー）とタグを表示する。
+- カードクリックでエディタ画面（`/`）に遷移し、該当ノートを表示する。
+
+#### 2.7.2 デフォルト直近 7 日間フィルタ
+
+- グリッドビューを開いた時点で、フィルタ条件を `date_from: 今日 - 7日, date_to: 今日` に自動設定する。
+- フィルタ条件はファイル名のタイムスタンプから算出する。Rust バックエンドの `list_notes` コマンドが日付範囲フィルタを処理する。
+
+#### 2.7.3 タグ・日付フィルタ
+
+- FilterBar コンポーネントでタグ選択と日付範囲指定の UI を提供する。
+- タグフィルタは AND 条件で動作する（選択した全タグを含むノートのみ表示）。
+- 日付フィルタとタグフィルタは組み合わせ可能（AND 結合）。
+
+#### 2.7.4 全文検索
+
+- SearchInput コンポーネントでテキスト入力を受け付け、`invoke('search_notes', { query, filter })` を呼び出す。
+- Rust バックエンドがファイル全走査で本文を検索し、結果を返す。
+- 入力のデバウンス（300ms）後に検索を実行し、結果をグリッドビューにリアルタイム反映する。
+
+### 2.8 設定モジュール設計
+
+- 設定画面（`/settings`）で保存ディレクトリの変更 UI を提供する。
+- ディレクトリ選択には Tauri の `@tauri-apps/plugin-dialog` の `open` API（ディレクトリ選択モード）を使用する。
+- ディレクトリ変更後、`invoke('set_config', ...)` で `config.json` を更新し、以降のノート読み書きは新ディレクトリを対象とする。
+- 既存ノートの移動は行わない。ディレクトリ変更後は新ディレクトリ内のノートのみを読み込む。
+
+### 2.9 配布方式
+
+| プラットフォーム | 方式 | ビルドツール |
 |---|---|---|
-| AI 呼び出し機能 | プロンプト執筆特化。AI 実行はターミナル/IDE 側の責務。 | `scope-guard.browser.spec.ts` で外部 API 呼び出しの不在を検証 |
-| クラウド同期 | NC-3 制約によりローカル保存のみ。 | ネットワーク通信の不在を検証 |
-| タイトル入力欄 | 即時記録コンセプト。タイトル不要。 | DOM にタイトル専用 `input` / `textarea` が存在しないことを検証 |
-| Markdown プレビュー（レンダリング） | プレーンテキスト寄りの編集体験を優先。 | レンダリング済み HTML 要素が本文領域に存在しないことを検証 |
-| モバイル対応 | デスクトップ（Linux / macOS）がターゲット。 | — |
-| データベース利用（SQLite 等） | `.md` ファイルのみ。 | 依存クレート・パッケージのレビュー |
+| Linux | バイナリ直接ダウンロード（`.AppImage` / `.deb`） | `tauri build` |
+| Linux | Flatpak（Flathub） | Flatpak manifest + `tauri build` |
+| Linux | NixOS パッケージ | Nix derivation |
+| macOS | バイナリ直接ダウンロード（`.dmg`） | `tauri build` |
+| macOS | Homebrew Cask | Cask formula |
+
+すべての配布形式は Tauri ビルド（`cargo-tauri`）を前提とする（RBC-1 準拠）。
 
 ### 2.10 非機能要件
 
-| 項目 | 基準 |
+| 項目 | 閾値 | 根拠 |
+|---|---|---|
+| 新規ノート作成レイテンシ | 100ms 以下 | AC-EDIT-03: 体感即時 |
+| 自動保存デバウンス | 500ms | 入力中の過剰な I/O を抑制 |
+| 全文検索デバウンス | 300ms | 入力中の過剰な検索実行を抑制 |
+| 検索応答時間 | 数百 ms 以内（想定数十件/週のデータ量） | ADR-005: ファイル全走査で十分な性能 |
+| バイナリサイズ | 数 MB〜10 MB 程度 | Tauri の軽量特性を活かす |
+| メモリフットプリント | 100 MB 以下（アイドル時） | OS WebView 利用により低メモリ |
+
+### 2.11 リリースブロッキング制約の遵守マッピング
+
+| 制約 | アーキテクチャ上の遵守方法 |
 |---|---|
-| 全文検索応答時間 | 直近 7 日間のノート（数十件規模）に対して 100ms 以内 |
-| 自動保存 | ユーザーの明示的な保存操作不要。テキスト変更後のデバウンス経過後に自動実行 |
-| プラットフォーム | Linux・macOS で起動・動作すること |
-| バイナリサイズ | Tauri 採用により Electron 比で大幅に軽量であること |
-| プライバシー | ネットワーク通信を一切行わない。すべてのデータはローカルファイルシステムにのみ存在 |
+| `framework:tauri` / `module:shell`（RBC-1） | プロセスモデルを Tauri Core Process + WebView Process の 2 プロセス構成とし、フロントエンド↔Rust バックエンド間の通信はすべて Tauri IPC（`invoke`）経由で行う。Electron 等のフレームワークコードは一切含まない。 |
+| `module:storage`（RBC-3） | データ永続化はローカル `.md` ファイルのみ。Rust バックエンドの storage モジュールが `std::fs` を使用してファイル I/O を行う。SQLite / IndexedDB / クラウドストレージへの依存は一切存在しない。AI API への通信コードも一切存在しない。 |
+| `platform:linux` / `platform:macos` | Tauri の OS WebView（Linux: WebKitGTK、macOS: WKWebView）を使用し、両プラットフォームで動作する。デフォルト保存ディレクトリは OS ごとに XDG / macOS 規約に従う。Windows 固有のコードパスは含まない。 |
+| `module:editor`（RBC-2 / RB-1 / RB-2） | CodeMirror 6 を唯一のエディタエンジンとする。タイトル入力欄コンポーネントは作成しない。Markdown レンダリングプレビューコンポーネントは作成しない。Cmd+N / Ctrl+N ショートカットと 1 クリックコピーボタンをコア UX として実装する。 |
+| `module:grid`（RB-4） | グリッドビューにデフォルト直近 7 日間フィルタ、タグ/日付フィルタ、全文検索の 3 機能を必須実装する。 |
 
 ---
 
 ## 3. Open Questions
 
-| ID | 質問 | 影響範囲 | 解決トリガー |
+| ID | 質問 | 影響範囲 | 決定期限の目安 |
 |---|---|---|---|
-| OQ-001 | 自動保存のデバウンス時間の最適値は何 ms か？ 500ms と 1000ms のどちらがユーザー体験として適切か。 | `module:editor` | ユーザーテスト実施時 |
-| OQ-002 | グリッドビューのカードに表示する本文プレビューの文字数上限をいくつにするか。 | `module:grid` | UI プロトタイプ作成時 |
-| OQ-003 | ノート削除機能の UI をどこに配置するか（エディタ画面内のメニュー、グリッドビューのコンテキストメニュー、あるいは両方）。 | `module:editor`, `module:grid` | UI 設計レビュー時 |
-| OQ-004 | ノート件数が数千件規模に達した場合、ファイル全走査の応答時間が 100ms を超える可能性がある。Tantivy 等の Rust ネイティブ全文検索エンジン導入をどの時点で判断するか。 | `module:storage`, `module:grid` | 全走査で体感遅延が発生した時点（ADR FU-002） |
-| OQ-005 | Flatpak マニフェスト・Homebrew Cask フォーミュラ・NixOS パッケージの初回作成をどのマイルストーンで行うか。 | ビルド・配布 | Linux/macOS 配布開始時（ADR FU-004〜FU-006） |
-| OQ-006 | 設定画面で保存ディレクトリを変更した場合、既存ノートの移動は行うか、新規ノートのみ新ディレクトリに作成するか。 | `module:settings`, `module:storage` | 詳細設計時 |
-| OQ-007 | エディタ画面のノートフィードが最初に読み込む件数および追加読み込み方式（無限スクロール / ページング / 仮想スクロール）をどう設計するか。数十件規模を想定するが、仮想スクロールが必要となる件数閾値を定義する必要がある。 | `module:editor`, `module:storage` | エディタ詳細設計時 |
+| OQ-001 | Svelte のルーティングライブラリとして `svelte-spa-router` を採用するか、Svelte 5 の組み込みルーティング機構を使用するか | フロントエンド全体の画面遷移実装 | Sprint 1 開始前 |
+| OQ-002 | グリッドビューの Masonry レイアウトを CSS Columns で実装するか、CSS Grid + JavaScript 計算で実装するか | `GridView.svelte` の実装方式 | Sprint 2 開始前 |
+| OQ-003 | 自動保存のデバウンス間隔 500ms は最適か。ユーザーテストで調整が必要か | エディタの `updateListener` 設定 | ユーザーテスト実施時 |
+| OQ-004 | ノート削除機能を v1 に含めるか。requirements に明示的な削除機能の記載がないため判断が必要 | storage モジュールの `delete_note` コマンドの実装優先度 | Sprint 1 開始前 |
+| OQ-005 | Tauri の `@tauri-apps/plugin-dialog` でディレクトリ選択ダイアログが Linux（WebKitGTK）環境で安定動作するか検証が必要 | 設定画面のディレクトリ選択 UI | Sprint 3 開始前 |

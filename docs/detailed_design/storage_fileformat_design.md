@@ -2,16 +2,15 @@
 codd:
   node_id: detail:storage_fileformat
   type: design
-  modules: [lib/stores, src-tauri/src/notes]
   depends_on:
   - id: detail:component_architecture
     relation: depends_on
     semantic: technical
   depended_by:
-  - id: plan:implementation_plan
+  - id: detail:grid_search
     relation: depends_on
     semantic: technical
-  - id: detail:grid_search
+  - id: plan:implementation_plan
     relation: depends_on
     semantic: technical
   conventions:
@@ -38,403 +37,365 @@ codd:
 
 ## 1. Overview
 
-本設計書は、PromptNotes における `module:storage` のファイル保存形式・ディレクトリ構造・読み書きロジックを詳細に定義する。`module:storage` は Rust バックエンド（`src-tauri/src/storage/`）に配置され、すべてのファイル操作の排他的な所有者である。フロントエンドからの直接ファイルシステムアクセスは Tauri IPC 境界により技術的に遮断されており、ノートの作成・読み取り・更新・削除・検索はすべて `#[tauri::command]` ハンドラ経由で実行される。
+本設計書は PromptNotes の `module:storage` におけるファイル永続化形式、ディレクトリ構造、ノート CRUD 操作、および自動保存メカニズムの詳細設計を定義する。`storage` モジュールは Rust Core Process 内に存在し、WebView Process からの `invoke` 呼び出しを唯一のエントリポイントとしてノートファイルのライフサイクル全体を管理する。
 
-PromptNotes のノートは単一の `.md` ファイルとして管理され、ファイル名が作成日時を兼ねる不変識別子として機能する。クラウド同期・データベース・インデックスエンジンは一切使用せず、ローカルファイルシステムのみをストレージバックエンドとする。
+本設計は以下のリリースブロッキング制約を構造的に強制する。
 
-### リリース不可制約（Non-negotiable conventions）への準拠
-
-| 制約 | 対象 | 内容 | 本設計書での反映箇所 |
+| 制約 ID | 対象 | 内容 | 本設計書での担保方法 |
 |---|---|---|---|
-| NNC-S1 | `module:storage` | ファイル名は `YYYY-MM-DDTHHMMSS.md` 形式で確定。作成時タイムスタンプで不変。 | §2 ファイル名生成フロー図、§4.1 ファイル名生成仕様 |
-| NNC-S2 | `module:storage` | frontmatter は YAML 形式、メタデータは `tags` のみ。作成日はファイル名から取得。追加フィールドの導入は要件変更が必要。 | §2 ファイルフォーマット図、§4.2 frontmatter スキーマ定義 |
-| NNC-S3 | `module:storage` | 自動保存必須。ユーザーによる明示的保存操作は不要。 | §4.4 自動保存のアトミック書き込み |
-| NNC-S4 | `module:storage`, `module:settings` | デフォルト保存ディレクトリは Linux: `~/.local/share/promptnotes/notes/`、macOS: `~/Library/Application Support/promptnotes/notes/`。設定から任意ディレクトリに変更可能。 | §3 パス解決の所有権、§4.3 ディレクトリ解決ロジック |
+| CONV-1 | `module:storage` | ファイル名は `YYYY-MM-DDTHHMMSS.md` 形式で確定。作成時タイムスタンプで不変 | ファイル名生成ロジックを `storage.rs` 内の単一関数に局所化し、リネーム API を提供しない |
+| CONV-2 | `module:storage` | frontmatter は YAML 形式、メタデータは `tags` のみ。作成日はファイル名から取得。追加フィールドの導入は要件変更が必要 | frontmatter のパース・シリアライズを固定スキーマの構造体で実装し、未知フィールドを破棄する |
+| CONV-3 | `module:storage` | 自動保存必須。ユーザーによる明示的保存操作は不要 | `save_note` コマンドはフロントエンドのデバウンスパイプラインから自動的に発行され、UI に「保存」ボタンを設置しない |
+| CONV-4 | `module:storage`, `module:settings` | デフォルト保存ディレクトリは Linux: `~/.local/share/promptnotes/notes/`、macOS: `~/Library/Application Support/promptnotes/notes/`。設定から任意ディレクトリに変更可能 | `config.rs` から取得したパスを `storage.rs` が参照し、ディレクトリ解決を起動時およびコマンド実行時に行う |
 
-対象プラットフォームは Linux および macOS である。
+データ永続化はローカル `.md` ファイルのみで行い、データベースやクラウドストレージの使用は禁止される（RBC-3）。すべてのファイル操作は Rust バックエンド経由で実行され、フロントエンドからの直接ファイルシステムアクセスは Tauri v2 のケイパビリティシステムにより構造的に不可能である。
+
+---
 
 ## 2. Mermaid Diagrams
 
-### 2.1 ノートファイルフォーマット構造
+### 2.1 ノートファイルの内部構造
 
 ```mermaid
 graph TD
-    subgraph "ノートファイル（.md）"
-        direction TB
-        Sep1["--- （YAML 区切り線）"]
-        FM["frontmatter（YAML）<br/>tags: [tag1, tag2]"]
-        Sep2["--- （YAML 区切り線）"]
-        Body["本文（Markdown プレーンテキスト）"]
+    subgraph NoteFile["ノートファイル: 2026-04-11T143052.md"]
+        FM["frontmatter (YAML)<br/>---<br/>tags:<br/>  - rust<br/>  - tauri<br/>---"]
+        Body["本文 (Markdown)<br/><br/>自由記述テキスト"]
+        FM --> Body
     end
 
-    subgraph "ファイル名（不変識別子）"
-        FN["YYYY-MM-DDTHHMMSS.md<br/>例: 2026-04-10T091530.md"]
+    subgraph Derived["ファイル名から導出されるメタデータ"]
+        Filename["ファイル名: 2026-04-11T143052.md"]
+        CreatedAt["作成日時: 2026-04-11 14:30:52"]
+        NoteID["ノートID: 2026-04-11T143052"]
+        Filename --> CreatedAt
+        Filename --> NoteID
     end
 
-    subgraph "メタデータ取得元"
-        CreatedAt["作成日時 → ファイル名からパース"]
-        Tags["タグ一覧 → frontmatter.tags"]
-        Preview["本文プレビュー → Body 先頭 N 文字"]
+    subgraph FrontmatterSchema["frontmatter 固定スキーマ"]
+        TagsField["tags: string[]<br/>(唯一のメタデータフィールド)"]
     end
 
-    FN --> CreatedAt
-    FM --> Tags
-    Body --> Preview
+    FM -.->|"パース対象"| FrontmatterSchema
+
+    style NoteFile fill:#2d3748,color:#fff
+    style Derived fill:#1a365d,color:#fff
+    style FrontmatterSchema fill:#553c9a,color:#fff
 ```
 
-**所有権**: ファイルフォーマットの定義と解釈は `module:storage`（Rust 側 `src-tauri/src/storage/`）が排他的に所有する。フロントエンドはファイルの内部構造を直接パースせず、`read_note` コマンドの戻り値として構造化データ（`NoteMetadata` + `body`）を受け取る。frontmatter のパースおよびシリアライズロジックを `module:storage` 外部に実装することは禁止される。
+**所有権と実装境界:**
 
-### 2.2 ファイル CRUD 操作フロー
+- ファイル名の生成（`YYYY-MM-DDTHHMMSS.md` 形式）は `storage.rs` 内の `generate_filename()` 関数が排他的に担当する。ファイル名は作成時に確定し、以後変更されない（CONV-1）。ノート ID はファイル名から拡張子を除いた `YYYY-MM-DDTHHMMSS` 文字列であり、ファイルシステム上のパスと 1:1 で対応する。
+- 作成日時はファイル名からパースして取得する。`NoteMetadata` 構造体に `created_at` フィールドを持つが、これはファイル名から導出される読み取り専用の値であり、frontmatter やファイルシステムのタイムスタンプには依存しない。
+- frontmatter は YAML 形式で `tags` フィールドのみを格納する（CONV-2）。`serde` の `deny_unknown_fields` は適用せず、将来的な互換性のために未知フィールドはパース時に無視して書き込み時に破棄する。ただし、追加フィールドの正式導入は要件変更を経なければならない。
+
+### 2.2 ストレージ操作のステートマシン
 
 ```mermaid
 stateDiagram-v2
-    [*] --> NotExists: 初期状態
+    [*] --> NotExist: アプリ起動前
 
-    NotExists --> Creating: create_note 呼び出し
-    Creating --> Exists: ファイル名生成 + 空テンプレート書き込み
+    NotExist --> Empty: create_note<br/>(空ファイル生成)
+    Empty --> HasContent: save_note<br/>(自動保存: 本文入力)
+    HasContent --> HasContent: save_note<br/>(自動保存: 編集)
+    Empty --> HasContent: save_note<br/>(自動保存: タグ追加)
+    HasContent --> [*]: delete_note<br/>(ファイル削除)
+    Empty --> [*]: delete_note<br/>(ファイル削除)
 
-    Exists --> Reading: read_note 呼び出し
-    Reading --> Exists: frontmatter パース + 本文返却
+    note right of Empty
+        frontmatter: tags: []
+        本文: 空文字列
+        ファイル名は不変
+    end note
 
-    Exists --> Saving: save_note 呼び出し（自動保存）
-    Saving --> WritingTmp: 一時ファイル書き込み (.tmp)
-    WritingTmp --> Renaming: std::fs::rename アトミック置換
-    Renaming --> Exists: 保存完了
-
-    Exists --> Deleting: delete_note 呼び出し
-    Deleting --> NotExists: ファイル削除
-
-    Exists --> Listing: list_notes / search_notes
-    Listing --> Exists: メタデータ一覧返却
+    note right of HasContent
+        frontmatter: tags: [...]
+        本文: Markdown テキスト
+        自動保存 (500ms デバウンス)
+    end note
 ```
 
-**実装境界**: 状態遷移のすべてのステップは `module:storage` の Rust コード内で完結する。`Creating` 状態でのファイル名生成（`YYYY-MM-DDTHHMMSS.md`）、`Saving` 状態でのアトミック書き込み（一時ファイル → rename）、`Listing` 状態でのディレクトリ走査はいずれも `module:storage` が単独で所有するロジックである。フロントエンドは IPC コマンドの発行と結果の受信のみを行う。
+**操作遷移の説明:**
 
-### 2.3 ディレクトリ解決とファイルパス構築
+- `create_note` は空の frontmatter（`tags: []`）と空の本文を持つファイルを生成する。ファイル名は呼び出し時刻から `generate_filename()` で決定され、以後不変である。
+- `save_note` はデバウンスパイプライン（フロントエンド 500ms）を経て自動発行される（CONV-3）。本文変更とタグ変更の両方が同一パイプラインで処理される。
+- `delete_note` はファイルをファイルシステムから物理削除する。ゴミ箱機能はスコープ外である。
+- `read_note` と `list_notes` は状態遷移を伴わない読み取り操作のため、図から省略している。
+
+### 2.3 ディレクトリ解決フロー
 
 ```mermaid
-flowchart TB
-    Start["IPC コマンド受信<br/>(filename のみ)"]
-    LoadSettings["module:settings から<br/>notes_dir 設定値を取得"]
-    HasCustom{カスタムディレクトリ<br/>設定あり？}
-    DefaultLinux["~/.local/share/<br/>promptnotes/notes/"]
-    DefaultMac["~/Library/Application Support/<br/>promptnotes/notes/"]
-    CustomDir["ユーザー指定ディレクトリ"]
-    DetectOS{OS 判定}
-    JoinPath["notes_dir + filename<br/>でフルパス構築"]
-    ValidateDir["ディレクトリ存在確認<br/>+ 書き込み権限検証"]
-    EnsureDir["ディレクトリ自動作成<br/>(create_dir_all)"]
-    Execute["ファイル操作実行"]
+flowchart TD
+    Start["storage コマンド呼び出し"] --> ReadConfig["config.rs から notes_dir を取得"]
+    ReadConfig --> HasCustom{config.json に<br/>notes_dir が設定済み?}
+    HasCustom -->|Yes| UseCustom["カスタムディレクトリを使用"]
+    HasCustom -->|No| DetectOS{OS 判定}
+    DetectOS -->|Linux| Linux["~/.local/share/promptnotes/notes/"]
+    DetectOS -->|macOS| Mac["~/Library/Application Support/promptnotes/notes/"]
+    UseCustom --> EnsureDir["ディレクトリ存在確認<br/>なければ再帰的に作成"]
+    Linux --> EnsureDir
+    Mac --> EnsureDir
+    EnsureDir --> Execute["ファイル操作を実行"]
 
-    Start --> LoadSettings
-    LoadSettings --> HasCustom
-    HasCustom -->|Yes| CustomDir
-    HasCustom -->|No| DetectOS
-    DetectOS -->|Linux| DefaultLinux
-    DetectOS -->|macOS| DefaultMac
-    DefaultLinux --> JoinPath
-    DefaultMac --> JoinPath
-    CustomDir --> JoinPath
-    JoinPath --> ValidateDir
-    ValidateDir -->|存在しない| EnsureDir
-    EnsureDir --> Execute
-    ValidateDir -->|存在する| Execute
+    style Start fill:#2d3748,color:#fff
+    style Execute fill:#2d3748,color:#fff
 ```
 
-**所有権**: パス解決フロー全体は `module:storage` が所有する。OS 判定には Rust の `std::env::consts::OS` または Tauri のパスリゾルバ（`app.path().app_data_dir()`）を使用する。フロントエンドはファイル名（`2026-04-10T091530.md`）のみを知り、フルパスには一切関与しない。設定値の永続化は `module:settings`（Rust 側）が所有し、`module:storage` は読み取り専用で設定値を参照する。
+**所有権:**
 
-### 2.4 frontmatter パース/シリアライズ処理
+- ディレクトリパスの解決は `storage.rs` が `config.rs` の `get_notes_dir()` を内部呼び出しして行う。フロントエンドにパス文字列を渡さず、`storage.rs` 内で完結する。
+- デフォルトディレクトリは OS ごとに XDG Base Directory（Linux）または Apple のアプリケーションサポートディレクトリ（macOS）に準拠する（CONV-4）。Rust では `dirs` クレート（`dirs::data_dir()`）を使用してプラットフォーム差を吸収する。
+- ディレクトリが存在しない場合は `std::fs::create_dir_all` で再帰的に作成する。これはアプリ初回起動時および保存ディレクトリ変更後の初回アクセス時に発生する。
 
-```mermaid
-sequenceDiagram
-    participant FE as Svelte フロントエンド
-    participant IPC as Tauri IPC
-    participant Storage as module:storage (Rust)
-    participant YAML as serde_yaml パーサ
-    participant FS as ファイルシステム
-
-    Note over FE,FS: read_note フロー
-    FE->>IPC: invoke('read_note', {filename})
-    IPC->>Storage: read_note(filename)
-    Storage->>FS: ファイル読み込み
-    FS-->>Storage: 生テキスト
-    Storage->>Storage: "---" で frontmatter と本文を分離
-    Storage->>YAML: frontmatter 部分をデシリアライズ
-    YAML-->>Storage: Frontmatter { tags: Vec<String> }
-    Storage-->>IPC: NoteData { metadata, body }
-    IPC-->>FE: 構造化データ返却
-
-    Note over FE,FS: save_note フロー
-    FE->>IPC: invoke('save_note', {filename, tags, body})
-    IPC->>Storage: save_note(filename, tags, body)
-    Storage->>YAML: tags を YAML frontmatter にシリアライズ
-    YAML-->>Storage: "---\ntags:\n- tag1\n---"
-    Storage->>Storage: frontmatter + "\n" + body を結合
-    Storage->>FS: 一時ファイルに書き込み
-    Storage->>FS: rename でアトミック置換
-    FS-->>Storage: 完了
-    Storage-->>IPC: {success: true}
-    IPC-->>FE: 結果返却
-```
-
-**実装境界**: YAML の解析・生成は `serde_yaml`（または `serde_yml`）クレートを使用し、`module:storage` の Rust コード内でのみ実行される。フロントエンドは `tags` を `string[]` として送受信し、YAML フォーマットの詳細を知らない。frontmatter に `tags` 以外のフィールドが含まれることは想定外であり、未知フィールドが存在した場合は無視（破棄しない、ラウンドトリップ保全）する動作とする。
+---
 
 ## 3. Ownership Boundaries
 
-### 3.1 module:storage の排他的責務
+### 3.1 ファイルフォーマットの所有権
 
-| 責務 | 詳細 | 制約根拠 |
-|---|---|---|
-| ファイル名生成 | `YYYY-MM-DDTHHMMSS.md` 形式。`chrono::Local::now()` を使用し、作成時に一度だけ生成。ファイル名はノートの生涯を通じて不変。 | NNC-S1 |
-| frontmatter スキーマ管理 | YAML 形式、`tags` フィールドのみ。作成日はファイル名に含まれるため frontmatter には記録しない。 | NNC-S2 |
-| ファイル CRUD | `create_note`、`read_note`、`save_note`、`delete_note` の各操作。 | NNC-S3（自動保存必須） |
-| パス解決 | 設定値または OS デフォルトパスとファイル名の結合。 | NNC-S4 |
-| 全文検索 | ディレクトリ内 `.md` ファイルの全走査による本文検索。 | データベース/インデックス不使用 |
-| アトミック書き込み | 一時ファイル書き込み → `rename` によるデータ破損防止。 | NNC-S3（自動保存の信頼性） |
-| frontmatter パース/シリアライズ | `serde_yaml` による YAML ↔ Rust 構造体の変換。 | NNC-S2 |
-
-### 3.2 module:settings との境界
-
-`module:storage` と `module:settings` の間には以下の明確な境界が存在する。
-
-| 関心事 | 所有者 | 他モジュールからの利用方法 |
-|---|---|---|
-| `notes_dir` 設定値の永続化（JSON 読み書き） | `module:settings`（Rust 側） | `module:storage` は `get_notes_dir()` 関数で現在値を読み取り専用で参照 |
-| `notes_dir` のデフォルト値決定 | `module:storage` | OS 判定に基づくデフォルト値を `module:settings` に提供（設定未保存時のフォールバック） |
-| パスバリデーション（ディレクトリ存在確認、書き込み権限確認） | `module:storage` | `module:settings` は `update_settings` 時に `module:storage` のバリデーション関数を呼び出し |
-
-設定ファイルの配置先:
-- **Linux**: `~/.config/promptnotes/config.json`
-- **macOS**: `~/Library/Application Support/promptnotes/config.json`
-
-### 3.3 module:shell との境界
-
-`module:shell` は IPC コマンドのディスパッチャとして機能し、`module:storage` の関数を呼び出す。`module:shell` 自体にストレージロジックを実装することは禁止される。
-
-```
-[フロントエンド] → invoke('save_note') → [module:shell: コマンドハンドラ] → [module:storage: save()]
-```
-
-`module:shell` が所有するのは `#[tauri::command]` アノテーション付きハンドラの登録と `AppState` の管理のみであり、ファイル操作の詳細は `module:storage` に委譲する。
-
-### 3.4 共有型 NoteMetadata の所有権
-
-`NoteMetadata` 構造体は `module:storage` の Rust コード内（`src-tauri/src/storage/`）に正規定義を持つ唯一の型である。
-
-```rust
-// src-tauri/src/storage/types.rs（正規定義）
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NoteMetadata {
-    pub filename: String,          // "2026-04-10T091530.md"
-    pub tags: Vec<String>,         // frontmatter から取得
-    pub created_at: String,        // ファイル名からパース "2026-04-10T09:15:30"
-    pub body_preview: String,      // 本文先頭 N 文字
-}
-```
-
-フロントエンド側の TypeScript ミラー型（`src/lib/types/note.ts`）は正規定義ではなく、Rust 側の変更に追随する。
-
-### 3.5 ファイル名の不変性保証
-
-ファイル名（`YYYY-MM-DDTHHMMSS.md`）はノート作成時に `module:storage` が生成し、以後変更されない。`module:storage` にリネーム API は存在しない。この不変性により、ファイル名がノートの一意識別子として機能し、`module:editor` のノートフィードにおける `NoteBlock` の一意キーおよび `/edit?focus=:filename` クエリパラメータの値と直接対応する。
-
-## 4. Implementation Implications
-
-### 4.1 ファイル名生成仕様
-
-ファイル名は `YYYY-MM-DDTHHMMSS.md` 形式で、ローカルタイムゾーンの現在時刻から生成する。
-
-```rust
-use chrono::Local;
-
-pub fn generate_filename() -> String {
-    Local::now().format("%Y-%m-%dT%H%M%S.md").to_string()
-}
-```
-
-- フォーマット: `2026-04-10T091530.md`（秒精度）
-- 同一秒内に複数ノートが作成された場合の衝突回避: ファイル存在チェックを行い、衝突時はミリ秒サフィックスを付与する（例: `2026-04-10T091530_001.md`）。
-- ファイル名はノートの作成日時を表し、作成後の変更は不可。
-
-### 4.2 frontmatter スキーマ定義
-
-```yaml
----
-tags:
-  - プロンプト設計
-  - ChatGPT
----
-```
-
-| フィールド | 型 | 必須 | 説明 |
+| 要素 | 所有者 | 責務 | 他モジュールへの公開 |
 |---|---|---|---|
-| `tags` | `string[]` | No（省略時は空配列） | ユーザーが付与するタグ一覧 |
+| ファイル名形式（`YYYY-MM-DDTHHMMSS.md`） | `storage.rs` / `generate_filename()` | UTC 現在時刻からファイル名を生成 | `NoteMetadata.id` としてフロントエンドに公開（読み取り専用） |
+| frontmatter スキーマ（`tags` フィールド） | `storage.rs` / `parse_frontmatter()`, `serialize_frontmatter()` | YAML パースとシリアライズ | `Note.frontmatter.tags` としてフロントエンドに公開 |
+| 本文テキスト | `storage.rs` / `save_note()`, `read_note()` | frontmatter 以降の Markdown テキストの読み書き | `Note.body` としてフロントエンドに公開 |
+| ディレクトリパス解決 | `storage.rs` + `config.rs` 連携 | `config.json` の `notes_dir` またはデフォルトパスを解決 | パス文字列はフロントエンドに公開しない |
 
-**禁止フィールド**: `title`、`created_at`、`updated_at`、`id` 等の追加フィールドは、要件変更なしに導入してはならない（NNC-S2）。作成日はファイル名から取得するため frontmatter に記録しない。
-
-パース時のルール:
-- `---` で囲まれた先頭ブロックを YAML frontmatter として解釈する。
-- frontmatter が存在しないファイルは `tags: []` として扱う。
-- 未知フィールドが存在する場合はラウンドトリップ時に保全する（ユーザーが手動追加した情報を破棄しない）。
-
-### 4.3 ディレクトリ解決ロジック
+### 3.2 Rust 構造体の定義（`models.rs` が単一所有者）
 
 ```rust
-use std::path::PathBuf;
-
-pub fn resolve_notes_dir(custom_dir: Option<&str>) -> PathBuf {
-    if let Some(dir) = custom_dir {
-        return PathBuf::from(dir);
-    }
-    
-    #[cfg(target_os = "linux")]
-    {
-        let home = std::env::var("HOME").expect("HOME not set");
-        PathBuf::from(home).join(".local/share/promptnotes/notes")
-    }
-    
-    #[cfg(target_os = "macos")]
-    {
-        let home = std::env::var("HOME").expect("HOME not set");
-        PathBuf::from(home).join("Library/Application Support/promptnotes/notes")
-    }
-}
-```
-
-デフォルトパス一覧（NNC-S4 準拠）:
-
-| OS | デフォルト保存ディレクトリ |
-|---|---|
-| Linux | `~/.local/share/promptnotes/notes/` |
-| macOS | `~/Library/Application Support/promptnotes/notes/` |
-
-ディレクトリが存在しない場合は `std::fs::create_dir_all()` で自動作成する。設定画面からユーザーが任意のディレクトリに変更可能であり、変更時にはディレクトリの存在確認と書き込み権限検証を Rust 側で実行する。
-
-### 4.4 自動保存とアトミック書き込み
-
-自動保存（NNC-S3 準拠）のフローは以下のとおり。
-
-1. **フロントエンド（`module:editor`）**: CodeMirror 6 の変更イベントをデバウンス（500ms〜1000ms）し、安定後に `invoke('save_note', {filename, tags, body})` を発行する。ユーザーによる明示的な保存操作（Ctrl+S 等）は設けない。
-2. **Rust 側（`module:storage`）**: 以下のアトミック書き込みを実行する。
-   - frontmatter（`tags` の YAML シリアライズ）と本文を結合してコンテンツを構築する。
-   - 一時ファイル（`.{filename}.tmp`）に書き込む。
-   - `std::fs::rename()` で一時ファイルを正式ファイル名にアトミック置換する。
-   - 一時ファイルと正式ファイルは同一ディレクトリ内に配置し、同一ファイルシステム上の `rename` のアトミック性を保証する。
-
-エラー発生時（ディスク容量不足、権限エラー等）は `Result<(), String>` でフロントエンドにエラーを返却し、フロントエンドは未保存状態をユーザーに通知する。
-
-### 4.5 list_notes の実装
-
-`list_notes` コマンドは保存ディレクトリ内の全 `.md` ファイルを走査し、各ファイルの `NoteMetadata` を返却する。
-
-```rust
-pub fn list_notes(notes_dir: &Path) -> Result<Vec<NoteMetadata>, StorageError> {
-    let mut notes = Vec::new();
-    for entry in std::fs::read_dir(notes_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().map_or(false, |ext| ext == "md") {
-            let filename = path.file_name().unwrap().to_string_lossy().to_string();
-            let content = std::fs::read_to_string(&path)?;
-            let (frontmatter, body) = parse_frontmatter(&content);
-            notes.push(NoteMetadata {
-                filename: filename.clone(),
-                tags: frontmatter.tags,
-                created_at: parse_created_at(&filename),
-                body_preview: body.chars().take(200).collect(),
-            });
-        }
-    }
-    notes.sort_by(|a, b| b.created_at.cmp(&a.created_at)); // 新しい順
-    Ok(notes)
-}
-```
-
-- 一時ファイル（`.tmp` 拡張子）は走査対象から除外する。
-- ファイル名が `YYYY-MM-DDTHHMMSS.md` 形式に合致しないファイルは無視する。
-- 返却順: `created_at` の降順（新しいノートが先頭）。
-
-### 4.6 search_notes の実装
-
-`search_notes` コマンドは全 `.md` ファイルの本文部分（frontmatter を除く）に対する大文字小文字非区別の部分文字列検索を行う。
-
-- 検索対象: 保存ディレクトリ内の全 `.md` ファイルの本文。
-- 性能目標: 直近 7 日間のノート数十件に対して **100ms 以内**で応答。
-- タグによるフィルタリング: `tags` パラメータが指定された場合、frontmatter の `tags` フィールドとの完全一致でフィルタする。
-- 日付によるフィルタリング: ファイル名からパースした `created_at` に対して期間指定フィルタを適用する。
-- インデックスエンジン（Tantivy, SQLite FTS 等）は現時点では導入しない。
-
-### 4.7 delete_note の実装
-
-`delete_note` コマンドは指定されたファイル名のノートを物理削除する。
-
-- ゴミ箱機能は実装しない（ファイルは即時削除）。
-- 削除対象ファイルが存在しない場合はエラーを返却する。
-- パストラバーサル攻撃防止: `filename` にパス区切り文字（`/`, `\`）が含まれる場合はバリデーションエラーとする。
-
-### 4.8 Rust 構造体定義
-
-```rust
-// src-tauri/src/storage/types.rs
-
+/// ノートの frontmatter。tags フィールドのみを持つ固定スキーマ。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Frontmatter {
     #[serde(default)]
     pub tags: Vec<String>,
-    
-    #[serde(flatten)]
-    pub extra: serde_yaml::Mapping, // 未知フィールドの保全用
 }
 
+/// ノートの全データ（read_note の応答）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Note {
+    pub id: String,           // "2026-04-11T143052"（ファイル名から拡張子除去）
+    pub frontmatter: Frontmatter,
+    pub body: String,
+    pub created_at: String,   // ISO 8601 形式（ファイル名から導出）
+}
+
+/// ノートのメタデータ（list_notes / search_notes の応答）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoteMetadata {
-    pub filename: String,
+    pub id: String,
     pub tags: Vec<String>,
     pub created_at: String,
-    pub body_preview: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NoteData {
-    pub metadata: NoteMetadata,
-    pub body: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SaveResult {
-    pub success: bool,
+    pub preview: String,      // 本文先頭 100 文字のプレビュー
 }
 ```
 
-`Frontmatter` 構造体の `extra` フィールド（`serde(flatten)` + `serde_yaml::Mapping`）により、ユーザーが手動追加したフィールドがラウンドトリップ時に保全される。ただし `module:storage` が自動挿入するフィールドは `tags` のみである。
+- `Frontmatter` 構造体は `tags` のみをフィールドに持つ。`#[serde(deny_unknown_fields)]` は付与せず、未知フィールドはデシリアライズ時に無視される。ただし `serialize_frontmatter()` は `Frontmatter` 構造体のみをシリアライズするため、未知フィールドは書き込み時に消失する。これは CONV-2 の「追加フィールドの導入は要件変更が必要」を実装レベルで強制する設計である。
+- `NoteMetadata.preview` は `list_notes` 呼び出し時にファイル読み込みと同時に生成する。プレビュー長は 100 文字で切り捨て、グリッド表示に使用する。
 
-### 4.9 セキュリティ対策
+### 3.3 ファイル I/O 関数の責務分担
 
-| 脅威 | 対策 | 実装箇所 |
+| 関数 | ファイル | 責務 | 呼び出し元 |
+|---|---|---|---|
+| `generate_filename()` | `storage.rs` | UTC 現在時刻 → `YYYY-MM-DDTHHMMSS.md` 文字列生成 | `create_note()` のみ |
+| `parse_filename(filename: &str)` | `storage.rs` | ファイル名 → `(id, created_at)` パース | `list_notes()`, `read_note()` |
+| `parse_frontmatter(content: &str)` | `storage.rs` | ファイル全文 → `(Frontmatter, body)` 分離 | `read_note()`, `list_notes()`, `search_notes()` |
+| `serialize_frontmatter(fm: &Frontmatter)` | `storage.rs` | `Frontmatter` → YAML 文字列（`---` 区切り付き） | `save_note()`, `create_note()` |
+| `resolve_notes_dir()` | `storage.rs` | `config.rs` 経由でノートディレクトリパスを取得 | 全 storage コマンド |
+| `ensure_dir(path: &Path)` | `storage.rs` | ディレクトリが存在しなければ再帰作成 | `create_note()`, `save_note()` |
+
+`search.rs` がファイル走査を行う場合、`storage.rs` の `resolve_notes_dir()` および `parse_frontmatter()` を呼び出す。ファイル列挙ロジックの重複を避けるため、ディレクトリ内の `.md` ファイル一覧を返す `list_note_files()` 関数を `storage.rs` に定義し、`search.rs` はこれを利用する。
+
+### 3.4 自動保存の所有権境界
+
+自動保存（CONV-3）はフロントエンドとバックエンドの協調で実現する。
+
+- **フロントエンド所有:** デバウンス制御（500ms `setTimeout`）、CodeMirror 6 の `updateListener` による変更検知、`FrontmatterBar` のタグ状態と本文の結合
+- **バックエンド所有:** ファイルへの物理書き込み、frontmatter のシリアライズ、ディレクトリ存在確認
+
+フロントエンドに「保存」ボタンや Ctrl+S / Cmd+S のショートカットを設けない。`EditorView.svelte` のデバウンスパイプラインが唯一の保存トリガーである。
+
+---
+
+## 4. Implementation Implications
+
+### 4.1 ファイル名生成の実装
+
+ファイル名は `chrono` クレートを使用して UTC 現在時刻から生成する。
+
+```rust
+use chrono::Utc;
+
+fn generate_filename() -> String {
+    Utc::now().format("%Y-%m-%dT%H%M%S.md").to_string()
+}
+
+fn parse_filename(filename: &str) -> Result<(String, String), StorageError> {
+    let id = filename.trim_end_matches(".md");
+    let created_at = chrono::NaiveDateTime::parse_from_str(id, "%Y-%m-%dT%H%M%S")
+        .map_err(|_| StorageError::InvalidFilename(filename.to_string()))?;
+    Ok((id.to_string(), created_at.format("%Y-%m-%dTT%H:%M:%S").to_string()))
+}
+```
+
+同一秒内に複数のノートが作成された場合、ファイル名が衝突する可能性がある。この場合、`storage.rs` はファイル存在チェックを行い、衝突時は秒数を 1 インクリメントしたファイル名を生成する。ユーザーの通常操作（Cmd+N / Ctrl+N）では秒単位の衝突は実質的に発生しないが、防御的に実装する。
+
+### 4.2 frontmatter パース・シリアライズの実装
+
+frontmatter のパースには `serde_yaml` クレート（または後継の `serde_yml`）を使用する。ファイル先頭の `---` 行で囲まれた YAML ブロックを frontmatter として抽出し、残りを本文として分離する。
+
+```rust
+fn parse_frontmatter(content: &str) -> Result<(Frontmatter, String), StorageError> {
+    if !content.starts_with("---\n") {
+        return Ok((Frontmatter { tags: vec![] }, content.to_string()));
+    }
+    let end = content[4..]
+        .find("\n---\n")
+        .ok_or(StorageError::MalformedFrontmatter)?;
+    let yaml_str = &content[4..4 + end];
+    let body = &content[4 + end + 5..];
+    let fm: Frontmatter = serde_yaml::from_str(yaml_str)?;
+    Ok((fm, body.to_string()))
+}
+
+fn serialize_frontmatter(fm: &Frontmatter, body: &str) -> String {
+    let yaml = serde_yaml::to_string(fm).unwrap_or_default();
+    format!("---\n{}---\n{}", yaml, body)
+}
+```
+
+frontmatter を持たないファイル（古いファイルや手動作成ファイル）は `tags: []` として扱い、エラーにしない。`save_note` 時には常に frontmatter を書き出す。
+
+### 4.3 CRUD コマンドの実装詳細
+
+#### `create_note`
+
+1. `resolve_notes_dir()` でディレクトリパスを取得
+2. `ensure_dir()` でディレクトリ存在を保証
+3. `generate_filename()` でファイル名を生成（衝突チェック付き）
+4. 空 frontmatter（`tags: []`）と空本文を `serialize_frontmatter()` で結合
+5. `std::fs::write()` でファイルを作成
+6. `NoteMetadata` を返却
+
+レイテンシ目標: 100ms 以下。空ファイル作成は数 ms で完了する。
+
+#### `save_note`
+
+1. `resolve_notes_dir()` でディレクトリパスを取得
+2. `id` からファイルパスを構築（`{notes_dir}/{id}.md`）
+3. ファイル存在チェック（存在しない場合は `StorageError::NotFound`）
+4. `serialize_frontmatter()` で frontmatter + 本文を結合
+5. `std::fs::write()` でファイルを上書き
+
+自動保存のため頻繁に呼び出される。`std::fs::write` はアトミック書き込みではないため、書き込み中のクラッシュでデータが破損するリスクがある。これを軽減するため、一時ファイル（`{id}.md.tmp`）に書き込み後に `std::fs::rename` でアトミックに置換する。
+
+```rust
+fn atomic_write(path: &Path, content: &str) -> Result<(), StorageError> {
+    let tmp_path = path.with_extension("md.tmp");
+    std::fs::write(&tmp_path, content)?;
+    std::fs::rename(&tmp_path, path)?;
+    Ok(())
+}
+```
+
+#### `read_note`
+
+1. `resolve_notes_dir()` でディレクトリパスを取得
+2. `id` からファイルパスを構築
+3. `std::fs::read_to_string()` でファイル全文を読み込み
+4. `parse_frontmatter()` で frontmatter と本文を分離
+5. `parse_filename()` で作成日時を導出
+6. `Note` 構造体を返却
+
+#### `delete_note`
+
+1. `resolve_notes_dir()` でディレクトリパスを取得
+2. `id` からファイルパスを構築
+3. `std::fs::remove_file()` でファイルを削除
+4. ファイルが存在しない場合は `StorageError::NotFound`
+
+#### `list_notes`
+
+1. `resolve_notes_dir()` でディレクトリパスを取得
+2. `std::fs::read_dir()` でディレクトリ内の `.md` ファイルを列挙
+3. 各ファイルについて `parse_filename()` と `parse_frontmatter()` を実行
+4. オプションの `NoteFilter`（タグフィルタ、日付範囲）を適用
+5. `created_at` の降順（新しい順）でソート
+6. `NoteMetadata[]` を返却
+
+プレビュー生成は本文先頭 100 文字を切り出す。マルチバイト文字の途中で切断しないよう `char_indices` を使用する。
+
+### 4.4 ディレクトリ設定の連携
+
+`config.rs` が管理する `config.json` のスキーマ:
+
+```json
+{
+  "notes_dir": "/custom/path/to/notes"
+}
+```
+
+`notes_dir` が未設定（`null` または `config.json` 自体が存在しない）の場合、`storage.rs` は以下のデフォルトパスを使用する:
+
+| OS | デフォルトパス | 解決方法 |
 |---|---|---|
-| パストラバーサル | `filename` にパス区切り文字が含まれないことを検証。フルパス構築後に正規化し、`notes_dir` 配下であることを確認。 | `module:storage` |
-| データ破損 | アトミック書き込み（一時ファイル → rename）。 | `module:storage` |
-| 直接ファイルアクセス | Tauri `fs` プラグインを `deny` 設定。全操作は IPC 経由。 | `tauri.conf.json` |
-| シンボリックリンク攻撃 | `notes_dir` 内のシンボリックリンクは追跡しない。通常ファイルのみを操作対象とする。 | `module:storage` |
+| Linux | `~/.local/share/promptnotes/notes/` | `dirs::data_dir()` + `/promptnotes/notes/` |
+| macOS | `~/Library/Application Support/promptnotes/notes/` | `dirs::data_dir()` + `/promptnotes/notes/` |
 
-### 4.10 性能特性
+設定変更時（`set_config` で `notes_dir` が変更された場合）、既存ノートファイルの移動は行わない。新しいディレクトリに存在するノートのみが `list_notes` の対象となる。この仕様はコンポーネントアーキテクチャ設計書の設定変更フロー（§2.3）で明示されている。
 
-| 操作 | 想定ノート数 | 性能目標 |
-|---|---|---|
-| `create_note` | N/A | 50ms 以内 |
-| `save_note`（自動保存） | 単一ファイル | 50ms 以内 |
-| `read_note` | 単一ファイル | 50ms 以内 |
-| `list_notes` | 数十〜数百件 | 200ms 以内 |
-| `search_notes` | 数十件（直近 7 日間） | 100ms 以内 |
-| `search_notes` | 数千件 | 100ms 超過の可能性あり（ADR FU-002 の導入判断トリガー） |
-| `delete_note` | 単一ファイル | 50ms 以内 |
+### 4.5 エラー型の設計
+
+`storage.rs` 固有のエラーは `error.rs` の `StorageError` enum で定義する。
+
+```rust
+#[derive(Debug, thiserror::Error, Serialize)]
+pub enum StorageError {
+    #[error("ファイルが見つかりません: {0}")]
+    NotFound(String),
+    #[error("不正なファイル名: {0}")]
+    InvalidFilename(String),
+    #[error("frontmatter のパースに失敗: {0}")]
+    MalformedFrontmatter(String),
+    #[error("I/O エラー: {0}")]
+    Io(String),
+    #[error("ディレクトリの作成に失敗: {0}")]
+    DirectoryCreation(String),
+}
+```
+
+`StorageError` は `Serialize` を derive し、Tauri IPC のエラー応答として JSON シリアライズされる。フロントエンドの `ipc.ts` では `Promise` の `catch` でこのエラーを受け取り、エラー種別に応じた処理を行う。
+
+### 4.6 パフォーマンス特性
+
+| 操作 | 想定レイテンシ | ボトルネック | 最適化戦略 |
+|---|---|---|---|
+| `create_note` | < 5ms | ファイル作成 I/O | なし（十分高速） |
+| `save_note` | < 10ms | ファイル書き込み I/O | アトミック書き込み（`write` + `rename`） |
+| `read_note` | < 10ms | ファイル読み込み + frontmatter パース | なし |
+| `list_notes` (100 件) | < 50ms | ディレクトリ走査 + 各ファイルの frontmatter パース | プレビュー取得を先頭 100 文字に制限 |
+| `list_notes` (1000 件) | < 500ms | 同上 | 将来的にメタデータキャッシュを検討（現時点では未実装） |
+| `delete_note` | < 5ms | ファイル削除 I/O | なし |
+
+想定データ量（数十件/週）では、インデックス構築なしのファイル全走査で数百 ms 以内の応答が十分達成可能である。
+
+### 4.7 リリースブロッキング制約の構造的対応
+
+**CONV-1（ファイル名形式の不変性）:** `generate_filename()` は `storage.rs` 内の private 関数であり、外部からファイル名を指定する API は存在しない。`save_note` は `id`（既存ファイル名）を受け取るのみで、リネーム機能は一切提供しない。ファイル名のフォーマット `YYYY-MM-DDTHHMMSS.md` は `chrono` の `format` 文字列で固定される。
+
+**CONV-2（frontmatter スキーマの固定）:** `Frontmatter` 構造体は `tags: Vec<String>` のみをフィールドに持つ。`serialize_frontmatter()` はこの構造体のみをシリアライズするため、仮にユーザーがテキストエディタで frontmatter に手動でフィールドを追加しても、次回の `save_note` 時に `tags` 以外は消失する。作成日は frontmatter に含めず、ファイル名から導出する。
+
+**CONV-3（自動保存の必須化）:** `save_note` コマンド自体は明示的に呼び出し可能だが、フロントエンドの `EditorView.svelte` に組み込まれた 500ms デバウンスパイプラインが唯一のトリガーである。保存ボタンや保存ショートカット（Ctrl+S / Cmd+S）は実装しない。
+
+**CONV-4（デフォルトディレクトリとカスタムディレクトリ）:** `resolve_notes_dir()` は `config.rs` の `get_config()` を呼び出し、`notes_dir` が設定済みであればそのパスを、未設定であれば `dirs::data_dir()` ベースのプラットフォーム固有デフォルトを返す。設定変更は `SettingsView.svelte` → `invoke('set_config')` → `config.rs` の経路でのみ可能であり、フロントエンド単独でのパス操作は禁止される。
+
+---
 
 ## 5. Open Questions
 
-| ID | 質問 | 影響範囲 | 解決トリガー |
+| ID | 質問 | 影響範囲 | 判断に必要な情報 |
 |---|---|---|---|
-| OQ-SF-001 | 同一秒内に複数ノートが作成された場合の衝突回避方式として、ミリ秒サフィックス付与（`_001`）が `YYYY-MM-DDTHHMMSS.md` 形式の不変制約と整合するか。衝突発生時のリトライ（1 秒待機して再生成）との比較。 | `module:storage` | 実装開始前のレビュー |
-| OQ-SF-002 | frontmatter の未知フィールド保全について、`serde(flatten)` + `serde_yaml::Mapping` 方式で YAML コメントやフォーマットが維持されるか。維持されない場合の代替パース手法（正規表現ベースの frontmatter 抽出）の検討。 | `module:storage` | プロトタイプ実装時の動作検証 |
-| OQ-SF-003 | `body_preview` の文字数上限（現在 200 文字想定）がグリッドビューの Masonry レイアウトにおけるカード高さと適切に対応するか。 | `module:storage`, `module:grid` | UI プロトタイプ作成時 |
-| OQ-SF-004 | 保存ディレクトリ変更時に既存ノートの移動を行うか、新規ノートのみ新ディレクトリに作成するか。移動する場合のトランザクション保証方式。 | `module:storage`, `module:settings` | 詳細設計レビュー時 |
-| OQ-SF-005 | `list_notes` で数千件規模のファイルを毎回全走査する場合のレイテンシ改善策として、メモリ内キャッシュ（ファイル変更監視 + 差分更新）を導入するか。 | `module:storage` | ノート件数が数百件を超えて体感遅延が発生した時点 |
+| OQ-SF-001 | 同一秒内のファイル名衝突時、秒数インクリメント方式で十分か。ミリ秒精度を採用すべきか | `storage.rs` / `generate_filename()` | ユーザー操作パターンの実測（高速連続 Cmd+N の頻度） |
+| OQ-SF-002 | ユーザーが外部テキストエディタでノートファイルを直接編集した場合、frontmatter の未知フィールドが消失する仕様を許容するか。あるいは未知フィールドを保持するために `serde_yaml::Value` ベースのパース方式に変更するか | `storage.rs` / `parse_frontmatter()`, `serialize_frontmatter()` | ユーザーの外部エディタ併用ニーズの確認。CONV-2 の厳密な解釈の合意 |
+| OQ-SF-003 | アトミック書き込み（`write` + `rename`）は全プラットフォーム（Linux ext4/btrfs、macOS APFS）で期待通りにアトミックに動作するか | `storage.rs` / `atomic_write()` | Linux（WebKitGTK 環境）および macOS での動作検証結果 |
+| OQ-SF-004 | `list_notes` のプレビュー生成時、frontmatter 直後の空行や見出し記法（`#`）を除去してプレビューテキストを生成すべきか | `storage.rs` / `list_notes()` | グリッドビューのカード表示仕様の詳細化 |
+| OQ-SF-005 | 保存ディレクトリ変更後、旧ディレクトリのノートへの参照をどう扱うか。エディタで開いているノートの保存先は即座に新ディレクトリに切り替わるか、セッション中は旧パスを維持するか | `storage.rs`, `config.rs`, `EditorView.svelte` | 設定変更時の UX 要件の明確化 |

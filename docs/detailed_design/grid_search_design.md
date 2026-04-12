@@ -2,7 +2,6 @@
 codd:
   node_id: detail:grid_search
   type: design
-  modules: [lib/components, src-tauri/src/notes]
   depends_on:
   - id: detail:component_architecture
     relation: depends_on
@@ -34,471 +33,595 @@ codd:
 
 ## 1. Overview
 
-本設計書は、PromptNotes の `module:grid` におけるグリッドビュー表示・フィルタリング・全文検索・画面遷移の詳細設計を定義する。グリッドビューはアプリケーションのインデックス画面（`/` ルート）として機能し、ノートを Pinterest スタイルの可変高カード（Masonry レイアウト）で一覧表示する。
+本設計書は PromptNotes の `module:grid` におけるグリッドビュー表示、全文検索、タグ・日付フィルタリング、およびエディタ画面への遷移の詳細設計を定義する。`module:grid` は WebView Process（Svelte SPA）内に存在し、Rust バックエンドの `search` モジュールおよび `storage` モジュールと Tauri IPC 経由で通信してノート一覧の取得・検索を行う。
 
-`module:grid` は Svelte フロントエンド（`src/lib/components/grid/`）に配置され、データ取得はすべて Tauri IPC 経由で `module:storage`（Rust バックエンド）に委譲する。フロントエンドからの直接ファイルシステムアクセスは Tauri IPC 境界により技術的に遮断されており、ノート一覧の取得・検索・削除はすべて `#[tauri::command]` ハンドラ（`list_notes`、`search_notes`、`delete_note`）を通じて実行される。
+グリッドビューは Pinterest スタイルの可変高カードレイアウトを採用し、各ノートカードにはプレビューテキスト（本文先頭 100 文字）、タグ一覧、作成日時を表示する。ユーザーはカードクリックによりエディタ画面（`/` ルート）へ遷移し、対象ノートを即座に編集可能とする。
 
-### リリース不可制約（Non-negotiable conventions）への準拠
+### リリースブロッキング制約の適用
 
-| 制約 ID | 対象 | 制約内容 | 本設計書での反映箇所 |
+本設計書は以下のリリースブロッキング制約を構造的に強制する。
+
+| 制約 | 対象 | 内容 | 本設計書での担保方法 |
 |---|---|---|---|
-| NNC-G1 | `module:grid` | Pinterest スタイル可変高カード必須。デフォルトフィルタは直近 7 日間。 | §2.1 Masonry レイアウト構成図、§4.1 カードコンポーネント設計、§4.3 デフォルトフィルタ仕様 |
-| NNC-G2 | `module:grid` | タグ・日付フィルタおよび全文検索（ファイル全走査）は必須機能。 | §2.2 検索・フィルタシーケンス図、§4.2 フィルタリング・検索 UI 設計、§4.4 全文検索連携仕様 |
-| NNC-G3 | `module:grid`, `module:editor` | カードクリックでエディタ画面へ遷移必須。 | §2.3 画面遷移フロー図、§4.5 カードクリック遷移仕様 |
+| RBC-GRID-1 | `module:grid` | Pinterest スタイル可変高カード必須。デフォルトフィルタは直近 7 日間 | `GridView.svelte` は CSS Masonry レイアウトを実装し、`filtersStore` の初期値を直近 7 日間に設定 |
+| RBC-GRID-2 | `module:grid` | タグ・日付フィルタおよび全文検索（ファイル全走査）は必須機能 | `FilterBar.svelte` にタグフィルタ・日付範囲フィルタを配置し、`SearchInput.svelte` で全文検索を実装。検索は Rust バックエンドのファイル全走査で実行 |
+| RBC-GRID-3 | `module:grid`, `module:editor` | カードクリックでエディタ画面へ遷移必須 | `NoteCard.svelte` の `click` イベントで `/{noteId}` へルーター遷移し、`EditorView.svelte` が `read_note` で対象ノートを読み込み |
 
-グリッドビューが依存する IPC コマンドと対応する Rust モジュールは以下のとおり。
+すべてのデータ取得は `src/lib/ipc.ts` のラッパー関数（`listNotes`、`searchNotes`）を経由し、フロントエンドからの直接ファイルシステムアクセスは Tauri v2 のケイパビリティシステムにより構造的に禁止される。
 
-| IPC コマンド | 用途 | 所有 Rust モジュール |
+### 技術スタック
+
+| 要素 | 技術 | 備考 |
 |---|---|---|
-| `list_notes` | ノートメタデータ一覧取得（`NoteMetadata[]` 返却） | `module:storage` (`storage::core`) |
-| `search_notes` | 全文検索・タグフィルタ・日付フィルタ適用済み一覧取得 | `module:storage` (`storage::search`) |
-| `delete_note` | 指定ノートの物理削除 | `module:storage` (`storage::core`) |
+| カードレイアウト | CSS columns（Masonry 代替） | JavaScript ベースの仮想スクロールは想定データ量では不要 |
+| 状態管理 | `filtersStore`（`src/stores/filters.ts`） | フィルタ条件のリアクティブ管理 |
+| 検索デバウンス | 300ms `setTimeout` | Rust バックエンドのファイル全走査を過剰にトリガーしない |
+| ルーティング | `svelte-spa-router` または Svelte 5 組み込み | `/grid` でマウント、カードクリックで `/` へ遷移 |
 
-データはローカル `.md` ファイルのみで管理され、クラウド同期・データベース（SQLite, Tantivy 等）・インデックスエンジンは一切使用しない。対象プラットフォームは Linux および macOS である。
+---
 
 ## 2. Mermaid Diagrams
 
-### 2.1 グリッドビュー コンポーネント構成
+### 2.1 グリッドビューのコンポーネント構成
 
 ```mermaid
-graph TB
-    subgraph "routes/ (index) - グリッドビューページ"
-        direction TB
-        GridPage["GridPage<br/>src/routes/+page.svelte"]
+graph TD
+    subgraph GridModule["module:grid — src/components/grid/"]
+        GridView["GridView.svelte<br/>Pinterest スタイルカードレイアウト<br/>ルート: /grid"]
+        FilterBar["FilterBar.svelte<br/>タグフィルタ + 日付範囲フィルタ"]
+        SearchInput["SearchInput.svelte<br/>全文検索入力<br/>デバウンス 300ms"]
+        NoteCard["NoteCard.svelte<br/>可変高カード<br/>プレビュー + タグ + 作成日"]
+
+        GridView --> FilterBar
+        FilterBar --> SearchInput
+        GridView --> NoteCard
     end
 
-    subgraph "module:grid コンポーネント群<br/>src/lib/components/grid/"
-        direction TB
-        SearchBar["SearchBar<br/>全文検索テキスト入力"]
-        TagFilter["TagFilter<br/>タグ選択フィルタ"]
-        DateFilter["DateFilter<br/>日付範囲フィルタ<br/>デフォルト: 直近7日間"]
-        MasonryGrid["MasonryGrid<br/>Masonry レイアウトコンテナ"]
-        NoteCard["NoteCard<br/>可変高カード（個別）"]
-        DeleteConfirm["DeleteConfirmDialog<br/>削除確認ダイアログ"]
+    subgraph Stores["stores — src/stores/"]
+        filtersStore["filters.ts<br/>tags: string[]<br/>dateFrom: string<br/>dateTo: string<br/>query: string"]
+        notesStore["notes.ts<br/>NoteMetadata[]"]
     end
 
-    subgraph "フロントエンド IPC 呼び出し層"
-        NotesAPI["src/lib/api/notes.ts<br/>list_notes / search_notes / delete_note"]
+    subgraph IPC["src/lib/ipc.ts"]
+        listNotes["listNotes(filter?)"]
+        searchNotes["searchNotes(query, filter?)"]
     end
 
-    subgraph "Tauri IPC → Rust バックエンド"
-        Invoke["invoke()"]
-        Storage["module:storage<br/>storage::core / storage::search"]
+    subgraph RustBackend["Rust Core Process"]
+        storageModule["storage.rs<br/>list_notes"]
+        searchModule["search.rs<br/>search_notes<br/>ファイル全走査"]
     end
 
-    GridPage --> SearchBar
-    GridPage --> TagFilter
-    GridPage --> DateFilter
-    GridPage --> MasonryGrid
-    GridPage --> DeleteConfirm
-    MasonryGrid --> NoteCard
+    FilterBar -->|"タグ・日付変更"| filtersStore
+    SearchInput -->|"検索クエリ変更"| filtersStore
+    GridView -->|"filtersStore 購読"| filtersStore
+    GridView -->|"notesStore 更新"| notesStore
+    NoteCard -->|"notesStore 購読"| notesStore
+    GridView -->|"query 空時"| listNotes
+    GridView -->|"query 非空時"| searchNotes
+    listNotes -->|"invoke('list_notes')"| storageModule
+    searchNotes -->|"invoke('search_notes')"| searchModule
 
-    SearchBar -->|"検索クエリ変更"| NotesAPI
-    TagFilter -->|"タグ選択変更"| NotesAPI
-    DateFilter -->|"日付範囲変更"| NotesAPI
-    NoteCard -->|"削除ボタン"| DeleteConfirm
-    DeleteConfirm -->|"確認後削除"| NotesAPI
+    NoteCard -->|"click → ルーター遷移 /"| EditorView["EditorView.svelte<br/>module:editor"]
 
-    NotesAPI -->|"invoke()"| Invoke
-    Invoke --> Storage
-
-    NoteCard -->|"カードクリック"| RouterNav["goto('/edit?focus=:filename')<br/>module:editor へ遷移"]
-
-    style NotesAPI fill:#4caf50,stroke:#2e7d32,color:#fff
-    style Invoke fill:#ff9800,stroke:#e65100,color:#000
+    style GridModule fill:#1a365d,color:#fff
+    style RustBackend fill:#2d3748,color:#fff
 ```
 
-**所有権と境界**: `module:grid` はグリッドビューの UI 表示とユーザーインタラクション（フィルタ操作、カードクリック、削除確認）を排他的に所有する。データ取得ロジック（ファイル走査、frontmatter パース、全文検索）は `module:storage`（Rust バックエンド）が所有し、`module:grid` は `src/lib/api/notes.ts` を経由して IPC コマンドを呼び出すのみである。`module:grid` がファイルシステムに直接アクセスすること、および検索ロジックをフロントエンド側に実装することは禁止される。
+**所有権と境界:**
 
-緑色で示された `src/lib/api/notes.ts` は IPC 呼び出しの抽象層であり、`@tauri-apps/api/core` の `invoke()` を各 Svelte コンポーネントが直接呼び出すことを防ぐ。IPC コマンド名やパラメータ形式の変更は `notes.ts` のみに影響し、`module:grid` のコンポーネント群には波及しない。
+- `GridView.svelte` はグリッド画面全体のオーケストレーションを担当する。`filtersStore` の変更を購読し、フィルタ条件に基づいて `ipc.ts` の `listNotes` または `searchNotes` を呼び出す。検索クエリが空の場合は `listNotes` を、非空の場合は `searchNotes` を使い分ける。
+- `FilterBar.svelte` はタグフィルタと日付範囲フィルタの UI を所有する。フィルタ条件の変更は `filtersStore` への書き込みを通じて `GridView` に伝播する。`FilterBar` 自身がバックエンドと直接通信することはない。
+- `SearchInput.svelte` は `FilterBar` 内に配置される全文検索入力コンポーネントであり、300ms デバウンスを内部で実装する。デバウンス後のクエリ文字列を `filtersStore.query` に書き込む。
+- `NoteCard.svelte` は `notesStore` から受け取った `NoteMetadata` を表示し、クリック時にルーター遷移を発火する。カード自身が IPC 呼び出しを行うことはない。
+- Rust バックエンドの `search.rs` がファイル全走査による全文検索を排他的に所有する。フロントエンド側で独自の検索・フィルタ処理を実装することは禁止される。
 
-### 2.2 検索・フィルタリング シーケンス
+### 2.2 検索・フィルタリングのデータフローシーケンス
 
 ```mermaid
 sequenceDiagram
     participant User as ユーザー
-    participant FE as GridPage (Svelte)
-    participant Filter as フィルタ状態管理
-    participant API as src/lib/api/notes.ts
-    participant IPC as Tauri IPC
-    participant RS as module:storage (Rust)
+    participant Search as SearchInput.svelte
+    participant Filter as FilterBar.svelte
+    participant FStore as filtersStore
+    participant Grid as GridView.svelte
+    participant IPC as ipc.ts
+    participant Rust as Rust Backend
     participant FS as ファイルシステム
 
-    Note over FE: 初回ロード時
-    FE->>Filter: デフォルトフィルタ設定<br/>（直近7日間、タグ未選択、検索語なし）
-    Filter->>API: search_notes({date_from, date_to})
-    API->>IPC: invoke('search_notes', params)
-    IPC->>RS: search_notes コマンド実行
-    RS->>FS: .md ファイル全走査
-    RS->>RS: ファイル名から日付パース → 日付フィルタ適用
-    RS->>RS: frontmatter パース → タグフィルタ適用
-    FS-->>RS: ファイル内容
-    RS-->>IPC: NoteMetadata[]（created_at降順）
-    IPC-->>API: 結果返却
-    API-->>FE: ノート一覧更新
-    FE->>FE: MasonryGrid にカード描画
+    Note over User, FS: 初回マウント時（デフォルト: 直近7日間）
+    Grid->>FStore: 初期値読み込み<br/>(dateFrom: 7日前, dateTo: 今日)
+    Grid->>IPC: listNotes({ dateFrom, dateTo })
+    IPC->>Rust: invoke('list_notes', { filter })
+    Rust->>FS: read_dir + 各ファイル parse
+    FS-->>Rust: ファイル群
+    Rust-->>IPC: NoteMetadata[]
+    IPC-->>Grid: NoteMetadata[]
+    Grid->>Grid: Masonry レイアウト描画
 
-    Note over User,FS: ユーザーが全文検索を入力
-    User->>FE: 検索テキスト入力
-    FE->>FE: デバウンス（300ms）
-    FE->>Filter: query パラメータ更新
-    Filter->>API: search_notes({date_from, date_to, query})
-    API->>IPC: invoke('search_notes', params)
-    IPC->>RS: search_notes コマンド実行
-    RS->>FS: .md ファイル全走査
-    RS->>RS: 本文に対する大文字小文字非区別部分文字列検索
-    RS-->>IPC: フィルタ済み NoteMetadata[]
-    IPC-->>FE: 結果返却
-    FE->>FE: MasonryGrid 再描画
+    Note over User, FS: 全文検索（デバウンス 300ms）
+    User->>Search: "Tauri" 入力
+    Search->>Search: デバウンス 300ms
+    Search->>FStore: query = "Tauri"
+    FStore-->>Grid: リアクティブ通知
+    Grid->>IPC: searchNotes("Tauri", { dateFrom, dateTo, tags })
+    IPC->>Rust: invoke('search_notes', { query, filter })
+    Rust->>FS: ファイル全走査 + 本文マッチング
+    FS-->>Rust: マッチ結果
+    Rust-->>IPC: NoteMetadata[]
+    IPC-->>Grid: NoteMetadata[]
+    Grid->>Grid: Masonry レイアウト再描画
 
-    Note over User,FS: ユーザーがタグフィルタを変更
-    User->>FE: タグ選択
-    FE->>Filter: tags パラメータ更新
-    Filter->>API: search_notes({date_from, date_to, query, tags})
-    API->>IPC: invoke('search_notes', params)
-    IPC->>RS: search_notes コマンド実行
-    RS->>RS: タグ完全一致フィルタ + 本文検索 + 日付フィルタ
-    RS-->>IPC: フィルタ済み NoteMetadata[]
-    IPC-->>FE: 結果返却
-    FE->>FE: MasonryGrid 再描画
+    Note over User, FS: タグフィルタ選択
+    User->>Filter: タグ "rust" を選択
+    Filter->>FStore: tags = ["rust"]
+    FStore-->>Grid: リアクティブ通知
+    Grid->>IPC: searchNotes("Tauri", { tags: ["rust"], dateFrom, dateTo })
+    IPC->>Rust: invoke('search_notes', { query, filter })
+    Rust->>FS: ファイル全走査 + タグ + 本文マッチング
+    FS-->>Rust: マッチ結果
+    Rust-->>IPC: NoteMetadata[]
+    IPC-->>Grid: Masonry レイアウト再描画
+
+    Note over User, FS: カードクリック → エディタ遷移
+    User->>Grid: NoteCard クリック
+    Grid->>Grid: router.push('/')
+    Grid->>IPC: readNote(noteId)
+    IPC->>Rust: invoke('read_note', { id })
+    Rust->>FS: read_to_string
+    FS-->>Rust: ファイル内容
+    Rust-->>IPC: Note
+    IPC-->>Grid: EditorView にマウント遷移
 ```
 
-**実装境界**: フィルタリングのすべてのロジック（日付範囲比較、タグ一致判定、全文検索の部分文字列マッチ）は `module:storage`（Rust 側 `storage::search`）が所有する。フロントエンド側の `module:grid` はフィルタパラメータの組み立てと IPC コマンドの発行のみを行い、返却された `NoteMetadata[]` をそのまま表示する。フロントエンド側でのクライアントサイドフィルタリングは行わない。
+**実装上の境界:**
 
-検索テキスト入力のデバウンスは 300ms とし、エディタの自動保存デバウンス（500ms〜1000ms、`module:editor` 所有）とは独立したタイマーである。このデバウンスロジックは `module:grid` の `SearchBar` コンポーネントが所有する。
+- 初回マウント時にデフォルトフィルタ（直近 7 日間）が適用される。`filtersStore` の `dateFrom` 初期値は `new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)` で算出し、`dateTo` は当日日付とする。これにより RBC-GRID-1 のデフォルトフィルタ要件を満たす。
+- 検索クエリとフィルタ条件は `filtersStore` で統合管理され、いずれかの値が変更されるたびに `GridView` がバックエンドへの再問い合わせを発行する。複数フィルタの同時変更（例: タグ選択と同時に検索クエリ入力）に対してはリアクティブ購読のバッチ処理で 1 回の IPC 呼び出しに統合する。
+- カードクリックからエディタ画面への遷移（RBC-GRID-3）は、Svelte ルーターの `push` によるクライアントサイド遷移で実装し、全画面リロードは発生しない。遷移先の `EditorView.svelte` が `read_note` を呼び出してノート全文を取得する。
 
-### 2.3 画面遷移フロー
+### 2.3 フィルタ条件のステートマシン
 
 ```mermaid
 stateDiagram-v2
-    [*] --> GridView: アプリ起動（/ ルート）
+    [*] --> Default: GridView マウント
 
-    GridView --> GridView: フィルタ変更 / 検索実行
-    GridView --> EditorView: カードクリック → /edit?focus=:filename
-    GridView --> DeleteConfirm: 削除ボタンクリック
-    DeleteConfirm --> GridView: キャンセル
-    DeleteConfirm --> GridView: 削除実行 → 一覧再取得
+    Default --> Filtered: タグ選択 / 日付変更
+    Default --> Searching: 検索クエリ入力
+    Filtered --> FilteredSearching: 検索クエリ入力
+    Searching --> FilteredSearching: タグ選択 / 日付変更
+    FilteredSearching --> Searching: フィルタクリア
+    FilteredSearching --> Filtered: 検索クリア
+    Filtered --> Default: フィルタ全クリア
+    Searching --> Default: 検索クリア
+    FilteredSearching --> Default: 全条件クリア
 
-    EditorView --> GridView: 戻るナビゲーション
-    
-    state GridView {
-        [*] --> Loading: 初回ロード / フィルタ変更
-        Loading --> Displaying: NoteMetadata[] 受信
-        Displaying --> Loading: フィルタパラメータ変更
-        Displaying --> Empty: 検索結果0件
-        Empty --> Loading: フィルタパラメータ変更
-    }
+    note right of Default
+        dateFrom: 7日前
+        dateTo: 今日
+        tags: []
+        query: ""
+        API: list_notes
+    end note
+
+    note right of Searching
+        query: 非空
+        API: search_notes
+    end note
+
+    note right of Filtered
+        tags/date が変更済み
+        query: 空
+        API: list_notes
+    end note
+
+    note right of FilteredSearching
+        tags/date + query
+        API: search_notes
+    end note
 ```
 
-**遷移の所有権**: カードクリックによるエディタ画面（`/edit?focus=:filename`）への遷移は `module:grid` の `NoteCard` コンポーネントが発火する。遷移先の `/edit` ルート（`module:editor` 所有）はノートフィード全体を表示する単一ルートであり、`focus` クエリパラメータで初期フォーカス対象ノートを指定する。`NoteFeed` は `list_notes` でフィードを初期ロード後、`focus` 指定ノートを先頭付近に配置して `read_note` でそのノートの内容を取得する。`module:grid` は遷移先のエディタロジック・フィード構築・フォーカス処理には一切関与しない。
+**状態遷移の説明:**
 
-削除フローでは、`NoteCard` 上の削除ボタンが `DeleteConfirmDialog` を表示し、ユーザー確認後に `delete_note` コマンドを発行する。削除完了後は `search_notes`（現在のフィルタパラメータ）を再発行して一覧を更新する。
+- デフォルト状態は直近 7 日間の `list_notes` 呼び出しに対応する。フィルタも検索も未適用の初期状態であり、`GridView` のマウント時に自動設定される。
+- `query` が非空の場合は常に `search_notes`（ファイル全走査）を使用し、空の場合は `list_notes` を使用する。これは `search_notes` がバックエンドで本文の全文マッチングを行うのに対し、`list_notes` はメタデータ（タグ・日付）のみでフィルタリングするためである。
+- フィルタクリアボタンは `FilterBar` に配置し、タグフィルタ・日付フィルタ・検索クエリをすべて初期値に戻す。
 
-### 2.4 NoteCard データフロー
-
-```mermaid
-flowchart LR
-    subgraph "module:storage (Rust)"
-        NM["NoteMetadata<br/>{filename, tags, created_at, body_preview}"]
-    end
-
-    subgraph "module:grid (Svelte)"
-        Card["NoteCard コンポーネント"]
-        TagBadge["タグバッジ表示"]
-        DateLabel["作成日時ラベル"]
-        Preview["本文プレビュー表示"]
-        ClickArea["クリック領域 → /edit?focus=:filename"]
-        DelBtn["削除ボタン"]
-    end
-
-    NM -->|"IPC 経由で返却"| Card
-    Card --> TagBadge
-    Card --> DateLabel
-    Card --> Preview
-    Card --> ClickArea
-    Card --> DelBtn
-
-    TagBadge -->|"tags[]"| NM
-    DateLabel -->|"created_at"| NM
-    Preview -->|"body_preview"| NM
-    ClickArea -->|"filename"| NM
-```
-
-**データ所有権**: `NoteMetadata` 構造体は `module:storage` の Rust コード内（`src-tauri/src/storage/types.rs`）に正規定義を持つ。フロントエンド側の TypeScript ミラー型（`src/lib/types/note.ts`）は正規定義ではなく、Rust 側の変更に追随する。`body_preview` のテキスト切り出し（先頭 N 文字）は `module:storage` が実行し、`module:grid` は受け取った文字列をそのまま表示する。
+---
 
 ## 3. Ownership Boundaries
 
-### 3.1 module:grid の排他的責務
+### 3.1 コンポーネント所有権
 
-| 責務 | 詳細 | 制約根拠 |
+| コンポーネント | 所有モジュール | 所有するリソース | 禁止事項 |
+|---|---|---|---|
+| `GridView.svelte` | `grid` | Masonry カードレイアウト、`filtersStore` 購読によるデータ取得オーケストレーション、`notesStore` への書き込み | 独自の検索・フィルタロジック実装、直接 `invoke` 呼び出し |
+| `NoteCard.svelte` | `grid` | 個別ノートカードの表示（プレビュー・タグ・作成日）、クリックイベントによるルーター遷移 | IPC 呼び出し、ノートデータの直接編集 |
+| `FilterBar.svelte` | `grid` | タグフィルタ UI（チェックボックス/チップ）、日付範囲フィルタ UI（日付入力）、フィルタクリアボタン | バックエンドとの直接通信 |
+| `SearchInput.svelte` | `grid` | 全文検索テキスト入力、300ms デバウンス制御 | 独自の検索アルゴリズム実装 |
+
+### 3.2 ストア所有権
+
+| ストア | 書き込み権限 | 購読者 | 初期値 |
+|---|---|---|---|
+| `filtersStore` | `FilterBar`（タグ・日付）、`SearchInput`（クエリ） | `GridView`、`FilterBar` | `{ tags: [], dateFrom: "7日前", dateTo: "今日", query: "" }` |
+| `notesStore` | `GridView`（IPC 応答を反映） | `GridView`、`NoteCard` | `[]` |
+
+`filtersStore` の型定義は `src/lib/types.ts` の `NoteFilter` 型を拡張した内部表現を使用する。
+
+```typescript
+// src/stores/filters.ts
+import { writable } from 'svelte/store';
+import type { NoteFilter } from '$lib/types';
+
+interface GridFilters extends NoteFilter {
+  query: string;  // 全文検索クエリ（NoteFilter には含まれない）
+}
+
+function getDefaultFilters(): GridFilters {
+  const now = new Date();
+  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  return {
+    tags: [],
+    date_from: sevenDaysAgo.toISOString().slice(0, 10),
+    date_to: now.toISOString().slice(0, 10),
+    query: '',
+  };
+}
+
+export const filtersStore = writable<GridFilters>(getDefaultFilters());
+
+export function resetFilters() {
+  filtersStore.set(getDefaultFilters());
+}
+```
+
+`filtersStore` の初期値関数 `getDefaultFilters()` が直近 7 日間のデフォルトフィルタを生成する。これにより RBC-GRID-1 のデフォルトフィルタ制約を `filtersStore` の初期化時点で構造的に強制する。
+
+### 3.3 IPC 呼び出しの所有権
+
+`module:grid` が使用する IPC 関数はすべて `src/lib/ipc.ts` からインポートする。
+
+| IPC 関数 | 呼び出し元 | 用途 |
 |---|---|---|
-| Masonry レイアウト表示 | Pinterest スタイルの可変高カードレイアウト。CSS Grid または専用ライブラリによる実装。 | NNC-G1 |
-| フィルタリング UI | 日付範囲選択、タグ選択、全文検索テキスト入力の各 UI コンポーネント提供。 | NNC-G2 |
-| デフォルトフィルタ適用 | 初回表示時に直近 7 日間のフィルタを自動適用。 | NNC-G1 |
-| カードクリック遷移 | `NoteCard` クリック時に `/edit?focus=:filename` へ SvelteKit ルーター遷移を発火。 | NNC-G3 |
-| 削除確認 UI | 削除ボタン押下時の確認ダイアログ表示、確認後に `delete_note` コマンド発行。 | — |
-| 検索デバウンス | `SearchBar` 入力のデバウンス（300ms）管理。 | — |
+| `listNotes(filter?)` | `GridView.svelte` | 検索クエリが空の場合のフィルタ付きノート一覧取得 |
+| `searchNotes(query, filter?)` | `GridView.svelte` | 検索クエリが非空の場合の全文検索 + フィルタ |
+| `readNote(id)` | ルーター遷移先の `EditorView.svelte` | カードクリック後のノート全文取得 |
 
-### 3.2 module:grid の禁止事項
+`NoteCard.svelte`、`FilterBar.svelte`、`SearchInput.svelte` は IPC 関数を直接呼び出さない。データ取得のトリガーは `GridView.svelte` のリアクティブ購読に一元化される。
 
-| 禁止事項 | 理由 |
-|---|---|
-| ファイルシステムへの直接アクセス | Tauri IPC 境界制約（NNC-1 from component_architecture）。全操作は `invoke()` 経由。 |
-| ファイル走査ロジックの実装 | 検索・一覧取得は `module:storage` の `search_notes` / `list_notes` に委譲。 |
-| クライアントサイドフィルタリング | フィルタロジックは Rust 側で一元実行。フロントエンドでの二重フィルタは禁止。 |
-| `NoteMetadata` の正規定義 | 正規定義は `module:storage` が所有。フロントエンドは TypeScript ミラー型のみ。 |
-| `body_preview` のテキスト加工 | プレビュー文字数の切り出しは `module:storage` が実行済み。 |
+### 3.4 バックエンド検索ロジックの所有権
 
-### 3.3 module:grid と module:storage の境界
+全文検索のマッチングロジックは `search.rs` が排他的に所有する。フロントエンドでの JavaScript ベースのフィルタリングや検索は一切行わない。
 
-| 関心事 | 所有者 | `module:grid` からの利用方法 |
-|---|---|---|
-| ノートメタデータ一覧取得 | `module:storage` (`list_notes`) | `src/lib/api/notes.ts` 経由で IPC 呼び出し |
-| 全文検索（本文部分文字列検索） | `module:storage` (`search_notes`) | `search_notes` にクエリ文字列を渡す |
-| タグフィルタリング | `module:storage` (`search_notes`) | `search_notes` に `tags` パラメータを渡す |
-| 日付フィルタリング | `module:storage` (`search_notes`) | `search_notes` に `date_from` / `date_to` パラメータを渡す |
-| ノート物理削除 | `module:storage` (`delete_note`) | `delete_note` に `filename` を渡す |
-| `NoteMetadata` 型定義 | `module:storage` (Rust 正規定義) | `src/lib/types/note.ts` の TypeScript ミラー型を参照 |
-| ソート順 | `module:storage` | `created_at` 降順でソート済みの配列を返却。フロントエンドでの再ソートは不要。 |
+`search_notes` コマンドの責務:
 
-### 3.4 module:grid と module:editor の境界
+1. `storage.rs` の `list_note_files()` でディレクトリ内の `.md` ファイル一覧を取得
+2. 各ファイルの frontmatter をパースしてタグフィルタ・日付フィルタを適用
+3. フィルタ通過ファイルの本文に対して `query` 文字列の部分一致検索を実行
+4. マッチしたノートの `NoteMetadata` を `created_at` 降順で返却
 
-`module:grid` と `module:editor` の間の唯一のインタラクションはカードクリックによる画面遷移である。
+検索はケースインセンシティブな部分一致とし、正規表現は初期スコープでは対応しない。
 
-- **遷移方向**: `module:grid` → `module:editor`（一方向）。`NoteCard` クリック時に SvelteKit の `goto('/edit?focus=:filename')` を呼び出す。
-- **受け渡しデータ**: URL パラメータ `:filename`（`YYYY-MM-DDTHHMMSS.md` 形式）のみ。ノートの内容やメタデータは遷移先の `module:editor` が `read_note` コマンドで独立取得する。
-- **戻り遷移**: エディタ画面からグリッドビューへの戻り遷移時、`module:grid` は `search_notes` を再発行してデータを最新化する。自動保存で更新されたタグや本文の変更が反映される。
+### 3.5 共有型の利用
 
-### 3.5 共有型の所有権（module:grid 視点）
+`NoteCard.svelte` が表示するデータは `src/lib/types.ts` の `NoteMetadata` 型に対応する。
 
-| 共有型 | 正規所有者 | module:grid での利用 |
-|---|---|---|
-| `NoteMetadata` | `module:storage` (Rust `src-tauri/src/storage/types.rs`) | `src/lib/types/note.ts` のミラー型をインポートしてカード描画に使用 |
-| `SearchParams` | `module:grid` が TypeScript 型として定義 | `src/lib/types/search.ts` に定義。`search_notes` コマンドの引数型。 |
+```typescript
+// src/lib/types.ts（既存定義の参照）
+interface NoteMetadata {
+  id: string;           // "2026-04-11T143052"
+  tags: string[];       // frontmatter の tags
+  created_at: string;   // ISO 8601（ファイル名から導出）
+  preview: string;      // 本文先頭 100 文字
+}
+```
 
-`SearchParams` 型は `module:grid` のフィルタ状態をコマンド引数に変換するための型であり、フロントエンド側で定義する。Rust 側では `search_notes` コマンドの引数として個別パラメータ（`query: Option<String>`, `tags: Option<Vec<String>>`, `date_from: Option<String>`, `date_to: Option<String>>`）で受け取る。
+`NoteMetadata` の型定義は `src/lib/types.ts` が単一所有者であり、`module:grid` のコンポーネントはここからインポートする。型の再定義は禁止。
+
+---
 
 ## 4. Implementation Implications
 
-### 4.1 Masonry レイアウト実装（NNC-G1 準拠）
+### 4.1 Masonry レイアウトの実装
 
-Pinterest スタイルの可変高カードレイアウトを CSS Grid で実装する。
+Pinterest スタイルの可変高カードレイアウト（RBC-GRID-1）は CSS `columns` プロパティを使用して実装する。
+
+```css
+/* GridView.svelte の <style> */
+.grid-container {
+  columns: 3 280px;      /* 最小カード幅 280px、最大 3 列 */
+  column-gap: 16px;
+  padding: 16px;
+}
+
+.note-card {
+  break-inside: avoid;    /* カードが列をまたがないようにする */
+  margin-bottom: 16px;
+  border-radius: 8px;
+  background: var(--card-bg);
+  padding: 16px;
+  cursor: pointer;
+  transition: box-shadow 0.2s ease;
+}
+
+.note-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+```
+
+CSS `columns` は JavaScript ベースの Masonry ライブラリ（Masonry.js 等）を使用せず、ブラウザネイティブのレイアウトで実現する。WebKitGTK（Linux）および WKWebView（macOS）の両方で `columns` プロパティは完全にサポートされている。
+
+カードの高さはプレビューテキストの長さとタグ数に応じて自然に変動し、`break-inside: avoid` により列間でカードが分断されないことを保証する。
+
+### 4.2 NoteCard コンポーネントの実装
+
+`NoteCard.svelte` は `NoteMetadata` を props として受け取り、以下の要素を表示する。
 
 ```svelte
-<!-- src/lib/components/grid/MasonryGrid.svelte -->
-<div class="masonry-grid">
-  {#each notes as note (note.filename)}
-    <NoteCard {note} on:click={() => navigateToEditor(note.filename)} on:delete={() => confirmDelete(note.filename)} />
-  {/each}
+<script lang="ts">
+  import type { NoteMetadata } from '$lib/types';
+  import { push } from 'svelte-spa-router';
+
+  export let note: NoteMetadata;
+
+  function handleClick() {
+    push(`/?note=${note.id}`);
+  }
+
+  function formatDate(isoDate: string): string {
+    const d = new Date(isoDate);
+    return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
+  }
+</script>
+
+<div class="note-card" on:click={handleClick} role="button" tabindex="0">
+  <p class="preview">{note.preview}</p>
+  {#if note.tags.length > 0}
+    <div class="tags">
+      {#each note.tags as tag}
+        <span class="tag">{tag}</span>
+      {/each}
+    </div>
+  {/if}
+  <time class="created-at">{formatDate(note.created_at)}</time>
 </div>
-
-<style>
-  .masonry-grid {
-    columns: 3;
-    column-gap: 16px;
-    padding: 16px;
-  }
-  /* レスポンシブ対応 */
-  @media (max-width: 900px) {
-    .masonry-grid { columns: 2; }
-  }
-  @media (max-width: 600px) {
-    .masonry-grid { columns: 1; }
-  }
-</style>
 ```
 
-各 `NoteCard` は以下の情報を表示する（すべて `NoteMetadata` から取得）。
+カードクリック時のルーター遷移は `push` 関数でエディタ画面のルート（`/`）にクエリパラメータ `note={id}` を付与する形で実装する。`EditorView.svelte` はマウント時にクエリパラメータから `noteId` を取得し、`readNote(noteId)` で対象ノートを読み込む。これにより RBC-GRID-3 を満たす。
 
-| 表示要素 | データソース | 表示仕様 |
-|---|---|---|
-| 本文プレビュー | `body_preview` | `module:storage` が切り出した先頭 N 文字をそのまま表示。カード高さはプレビュー長に応じて可変。 |
-| タグバッジ | `tags[]` | 各タグをバッジ（チップ）UI で表示。クリック時にタグフィルタへの追加が可能。 |
-| 作成日時 | `created_at` | 人間可読形式（例: `2026-04-10 09:15`）でフォーマット。フォーマット処理はフロントエンド側で実行。 |
-| 削除ボタン | — | カード右上にアイコンボタン配置。クリック時に `DeleteConfirmDialog` を表示。 |
+### 4.3 FilterBar コンポーネントの実装
 
-カード全体がクリック領域であり、クリック時に `/edit?focus=:filename` へ遷移する（NNC-G3 準拠）。削除ボタンのクリックイベントは `stopPropagation()` でカードクリックへの伝播を防止する。
+`FilterBar.svelte` はタグフィルタと日付範囲フィルタを提供する。
 
-### 4.2 フィルタリング・検索 UI 設計（NNC-G2 準拠）
+**タグフィルタ:** 現在の `notesStore` に含まれる全タグのユニーク一覧を算出し、チップ形式で表示する。チップクリックでトグル選択し、`filtersStore.tags` を更新する。
 
-フィルタリング UI は `GridPage` の上部に配置し、以下の 3 つのフィルタコンポーネントで構成する。
+```svelte
+<script lang="ts">
+  import { filtersStore, resetFilters } from '$stores/filters';
+  import { notesStore } from '$stores/notes';
+  import SearchInput from './SearchInput.svelte';
 
-| コンポーネント | 入力タイプ | パラメータ名 | 動作 |
-|---|---|---|---|
-| `SearchBar` | テキスト入力 | `query` | 入力テキストで本文の部分文字列検索（大文字小文字非区別）。300ms デバウンス。 |
-| `TagFilter` | 複数選択（チェックボックスまたはチップ） | `tags` | 選択されたすべてのタグを含むノートを AND 条件でフィルタ。 |
-| `DateFilter` | 日付範囲セレクタ | `date_from`, `date_to` | ファイル名の作成日時に対する範囲フィルタ。 |
+  $: allTags = [...new Set($notesStore.flatMap(n => n.tags))].sort();
 
-フィルタ変更時の動作:
-1. いずれかのフィルタが変更されると、全フィルタパラメータを統合して `search_notes` コマンドを発行する。
-2. 複数フィルタは AND 条件で結合される（日付範囲内 AND 指定タグを含む AND 本文にクエリ文字列を含む）。
-3. すべてのフィルタが未指定の場合（デフォルト状態を除く）、`list_notes` 相当の全件取得となる。
+  function toggleTag(tag: string) {
+    filtersStore.update(f => ({
+      ...f,
+      tags: f.tags.includes(tag)
+        ? f.tags.filter(t => t !== tag)
+        : [...f.tags, tag],
+    }));
+  }
+</script>
 
-タグ候補の取得: `list_notes` の結果から全ノートのタグを収集し、重複排除してタグフィルタの選択肢とする。タグ候補専用の IPC コマンドは設けず、既存の `NoteMetadata.tags` から抽出する。
-
-### 4.3 デフォルトフィルタ仕様（NNC-G1 準拠）
-
-グリッドビューの初回表示時に、`DateFilter` のデフォルト値として **直近 7 日間** を自動設定する。
-
-- `date_from`: 現在日時から 7 日前の `YYYY-MM-DD` 形式文字列。
-- `date_to`: 現在日時の `YYYY-MM-DD` 形式文字列。
-- `query`: 空文字列（全文検索なし）。
-- `tags`: 空配列（タグフィルタなし）。
-
-デフォルトフィルタの計算はフロントエンド側（`module:grid` の `DateFilter` コンポーネント）で実行する。日付フィルタの範囲変更はユーザーが自由に行え、「全期間」選択でフィルタを解除できる。
-
-直近 7 日間にノートが存在しない場合は、空の Masonry グリッドを表示し、「この期間のノートはありません。日付フィルタを変更してください。」のメッセージを表示する。
-
-### 4.4 全文検索連携仕様（NNC-G2 準拠）
-
-全文検索は `module:storage`（Rust 側 `storage::search`）が所有するファイル全走査方式で実装される。`module:grid` は検索クエリを `search_notes` コマンドに渡すのみで、検索アルゴリズムの実装に関与しない。
-
-`search_notes` コマンドのパラメータ:
-
-```typescript
-// src/lib/types/search.ts
-export interface SearchParams {
-  query?: string;       // 全文検索クエリ（大文字小文字非区別部分文字列）
-  tags?: string[];      // タグフィルタ（AND 条件）
-  date_from?: string;   // 日付フィルタ開始（YYYY-MM-DD）
-  date_to?: string;     // 日付フィルタ終了（YYYY-MM-DD）
-}
+<div class="filter-bar">
+  <SearchInput />
+  <div class="tag-chips">
+    {#each allTags as tag}
+      <button
+        class="chip"
+        class:active={$filtersStore.tags.includes(tag)}
+        on:click={() => toggleTag(tag)}
+      >
+        {tag}
+      </button>
+    {/each}
+  </div>
+  <div class="date-range">
+    <input type="date" bind:value={$filtersStore.date_from} />
+    <span>〜</span>
+    <input type="date" bind:value={$filtersStore.date_to} />
+  </div>
+  <button class="clear-btn" on:click={resetFilters}>クリア</button>
+</div>
 ```
 
-対応する Rust 側コマンド:
+**日付範囲フィルタ:** HTML5 の `<input type="date">` を使用する。`date_from` と `date_to` を `filtersStore` に双方向バインドする。初期値は直近 7 日間（RBC-GRID-1）。
+
+**タグ一覧の取得:** 初回マウント時に `listNotes` をフィルタなし（直近 7 日間）で呼び出した結果の `NoteMetadata[]` からタグを収集する。日付範囲を広げた場合や全文検索を行った場合は、その応答に含まれるタグ一覧で動的に更新される。
+
+### 4.4 SearchInput コンポーネントの実装
+
+```svelte
+<script lang="ts">
+  import { filtersStore } from '$stores/filters';
+
+  let inputValue = '';
+  let debounceTimer: ReturnType<typeof setTimeout>;
+
+  function handleInput() {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      filtersStore.update(f => ({ ...f, query: inputValue }));
+    }, 300);
+  }
+</script>
+
+<input
+  type="search"
+  placeholder="ノートを検索..."
+  bind:value={inputValue}
+  on:input={handleInput}
+/>
+```
+
+300ms デバウンスはコンポーネント内の `setTimeout` / `clearTimeout` で実装する。デバウンス後に `filtersStore.query` を更新し、`GridView` のリアクティブ購読がバックエンドへの問い合わせをトリガーする。
+
+### 4.5 GridView のデータ取得オーケストレーション
+
+`GridView.svelte` は `filtersStore` の購読により、フィルタ条件変更を検知してバックエンドにデータを要求する。
+
+```svelte
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import { filtersStore } from '$stores/filters';
+  import { notesStore } from '$stores/notes';
+  import { listNotes, searchNotes } from '$lib/ipc';
+  import NoteCard from './NoteCard.svelte';
+  import FilterBar from './FilterBar.svelte';
+
+  let loading = false;
+
+  async function fetchNotes(filters: GridFilters) {
+    loading = true;
+    try {
+      const filter = {
+        tags: filters.tags.length > 0 ? filters.tags : undefined,
+        date_from: filters.date_from,
+        date_to: filters.date_to,
+      };
+      const notes = filters.query
+        ? await searchNotes(filters.query, filter)
+        : await listNotes(filter);
+      notesStore.set(notes);
+    } finally {
+      loading = false;
+    }
+  }
+
+  $: fetchNotes($filtersStore);
+</script>
+
+<div class="grid-page">
+  <FilterBar />
+  {#if loading}
+    <div class="loading">読み込み中...</div>
+  {:else if $notesStore.length === 0}
+    <div class="empty">ノートが見つかりません</div>
+  {:else}
+    <div class="grid-container">
+      {#each $notesStore as note (note.id)}
+        <NoteCard {note} />
+      {/each}
+    </div>
+  {/if}
+</div>
+```
+
+`$: fetchNotes($filtersStore)` のリアクティブ宣言により、`filtersStore` のいずれかのプロパティが変更されるたびに自動的にデータ再取得が発行される。Svelte のリアクティブシステムがバッチ処理するため、同一ティック内の複数更新は 1 回の `fetchNotes` 呼び出しに統合される。
+
+### 4.6 バックエンドの NoteFilter 型と search_notes コマンド
+
+Rust バックエンドの `NoteFilter` 構造体（`models.rs` で定義済み）に対応するフィルタリングロジック:
 
 ```rust
+// search.rs
 #[tauri::command]
-pub async fn search_notes(
-    query: Option<String>,
-    tags: Option<Vec<String>>,
-    date_from: Option<String>,
-    date_to: Option<String>,
-    state: tauri::State<'_, AppState>,
-) -> Result<Vec<NoteMetadata>, String> {
-    let storage = state.storage.lock().await;
-    storage.search(&query, &tags, &date_from, &date_to)
-        .map_err(|e| e.to_string())
+pub fn search_notes(query: String, filter: Option<NoteFilter>) -> Result<Vec<NoteMetadata>, StorageError> {
+    let notes_dir = resolve_notes_dir()?;
+    let files = list_note_files(&notes_dir)?;
+    let mut results: Vec<NoteMetadata> = Vec::new();
+
+    for file in files {
+        let filename = file.file_name().to_string_lossy().to_string();
+        let (id, created_at) = parse_filename(&filename)?;
+
+        // 日付フィルタ（ファイル名ベース）
+        if let Some(ref f) = filter {
+            if let Some(ref from) = f.date_from {
+                if created_at < *from { continue; }
+            }
+            if let Some(ref to) = f.date_to {
+                if created_at > *to { continue; }
+            }
+        }
+
+        let content = std::fs::read_to_string(&file.path())?;
+        let (frontmatter, body) = parse_frontmatter(&content)?;
+
+        // タグフィルタ
+        if let Some(ref f) = filter {
+            if let Some(ref tags) = f.tags {
+                if !tags.is_empty() && !tags.iter().any(|t| frontmatter.tags.contains(t)) {
+                    continue;
+                }
+            }
+        }
+
+        // 全文検索（ケースインセンシティブ部分一致）
+        let query_lower = query.to_lowercase();
+        let body_lower = body.to_lowercase();
+        let tags_str = frontmatter.tags.join(" ").to_lowercase();
+        if !body_lower.contains(&query_lower) && !tags_str.contains(&query_lower) {
+            continue;
+        }
+
+        let preview = body.chars().take(100).collect::<String>();
+        results.push(NoteMetadata { id, tags: frontmatter.tags, created_at, preview });
+    }
+
+    results.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    Ok(results)
 }
 ```
 
-性能目標:
-- 直近 7 日間のノート（数十件規模）に対して **100ms 以内** で応答。
-- 数千件規模に達して体感遅延が発生した場合は ADR FU-002 として Tantivy 等の導入判断を行う。
+検索対象は本文テキストおよびタグ文字列である。ファイル名（ノート ID）は検索対象外とする。日付フィルタはファイル名から導出した `created_at` に対して適用し、ファイル読み込み前にスキップすることでパフォーマンスを最適化する。
 
-検索中の UI 状態: `search_notes` の応答待ち中はローディングインジケータを表示する。100ms 以内で応答が返る通常ケースではインジケータは視認されないが、件数増大時の UX 劣化を防ぐ保険として実装する。
+### 4.7 パフォーマンス特性
 
-### 4.5 カードクリック遷移仕様（NNC-G3 準拠）
+| 操作 | 想定レイテンシ | 条件 | 閾値の根拠 |
+|---|---|---|---|
+| 初回マウント（直近 7 日間） | < 100ms | 7 日間のノート数 ≤ 数十件 | `list_notes` の 100 件走査 < 50ms + レンダリング |
+| 全文検索（100 件） | < 200ms | デバウンス 300ms + バックエンド走査 | ファイル全走査 < 50ms + 本文マッチング |
+| 全文検索（1000 件） | < 800ms | 想定上限 | ファイル全走査 < 500ms + 本文マッチング |
+| タグフィルタ切替 | < 100ms | メタデータのみのフィルタ | `list_notes` のフィルタ済み結果 |
+| カードクリック → エディタ表示 | < 150ms | ルーター遷移 + `read_note` | 単一ファイル読み込み < 10ms + UI 遷移 |
 
-`NoteCard` のクリックイベントハンドラは SvelteKit の `goto()` 関数を使用してエディタ画面へ遷移する。
+デバウンス 300ms によりユーザーがタイピング中にバックエンドへの過剰な問い合わせを防止する。想定データ量（数十件/週）ではインデックス構築なしのファイル全走査で十分な応答速度を達成できる。
 
-```typescript
-// src/lib/components/grid/NoteCard.svelte 内
-import { goto } from '$app/navigation';
+### 4.8 リリースブロッキング制約への構造的対応
 
-function handleCardClick(filename: string) {
-  goto(`/edit?focus=${encodeURIComponent(filename)}`);
-}
-```
+**RBC-GRID-1（Pinterest スタイル可変高カード + デフォルト 7 日間フィルタ）:**
 
-- 遷移先: `/edit?focus=:filename`（`module:editor` 所有のルート）。
-- パラメータ: `filename`（`YYYY-MM-DDTHHMMSS.md` 形式、`NoteMetadata.filename` の値）。
-- 遷移先の `module:editor` は `NoteFeed` 初期ロードで `list_notes` を発行し、`focus` 指定の `filename` を用いて該当 `NoteBlock` の `read_note` を独立発行する。`module:grid` から `module:editor` へのノートデータの直接受け渡しは行わない。
+- CSS `columns` プロパティにより可変高の Masonry レイアウトを実現する。カードの高さはプレビューテキスト長とタグ数に応じて自然に決定される。
+- `filtersStore` の `getDefaultFilters()` 関数が `date_from` を 7 日前に、`date_to` を当日に設定する。`GridView` マウント時にこの初期値で `listNotes` が呼び出されるため、デフォルト表示は必ず直近 7 日間となる。
+- `resetFilters()` 関数もデフォルト値を直近 7 日間に戻すため、フィルタクリア操作でもこの制約が維持される。
 
-### 4.6 削除フローの実装
+**RBC-GRID-2（タグ・日付フィルタ + 全文検索の必須化）:**
 
-削除操作は以下のフローで実行する。
+- `FilterBar.svelte` がタグチップフィルタと日付範囲入力を UI として提供する。
+- `SearchInput.svelte` が 300ms デバウンス付き全文検索入力を提供する。
+- バックエンドの `search_notes` コマンドがファイル全走査によるケースインセンシティブ部分一致検索を実行する。フロントエンド側での独自フィルタリングは禁止し、すべてバックエンド経由とする。
+- タグフィルタ、日付フィルタ、全文検索は同時適用可能であり、`filtersStore` の統合状態によりバックエンドに AND 条件として渡される。
 
-1. `NoteCard` の削除ボタンクリック → `DeleteConfirmDialog` を表示。
-2. ユーザーが「削除」を確認 → `src/lib/api/notes.ts` の `deleteNote(filename)` を呼び出し。
-3. `invoke('delete_note', { filename })` → Rust 側 `module:storage` がファイルを物理削除。
-4. 削除成功後、現在のフィルタパラメータで `search_notes` を再発行し、一覧を更新。
-5. 削除対象のカードがアニメーション付きで消去される。
+**RBC-GRID-3（カードクリックでエディタ遷移）:**
 
-ゴミ箱機能は実装しない（ファイルは即時削除）。削除確認ダイアログにはノートの `body_preview` 先頭部分を表示し、ユーザーの誤削除を防止する。
+- `NoteCard.svelte` の `click` イベントハンドラが `push('/?note={id}')` でルーター遷移を発火する。
+- `EditorView.svelte` がクエリパラメータの `note` を検出し、`readNote(id)` で対象ノートを読み込んで CodeMirror 6 にセットする。
+- キーボードアクセシビリティのため、`NoteCard` には `role="button"` と `tabindex="0"` を付与し、Enter キーでもクリックと同等の遷移が発生する。
 
-### 4.7 フロントエンド状態管理
+### 4.9 Tauri IPC セキュリティへの準拠
 
-`module:grid` のフィルタ状態は Svelte のリアクティブストアで管理する。
+`module:grid` のすべてのデータ取得は `src/lib/ipc.ts` のラッパー関数を経由する。`@tauri-apps/api/core` の `invoke` を直接インポートするコンポーネントは `module:grid` 内に存在しない。Tauri v2 のケイパビリティ設定で `fs` プラグインが無効化されているため、フロントエンドからの直接ファイルアクセスは構造的に不可能である。
 
-```typescript
-// src/lib/stores/gridFilter.ts
-import { writable } from 'svelte/store';
-import type { SearchParams } from '$lib/types/search';
-
-function getDefaultDateFrom(): string {
-  const d = new Date();
-  d.setDate(d.getDate() - 7);
-  return d.toISOString().slice(0, 10);
-}
-
-function getDefaultDateTo(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-export const gridFilter = writable<SearchParams>({
-  query: '',
-  tags: [],
-  date_from: getDefaultDateFrom(),
-  date_to: getDefaultDateTo(),
-});
-```
-
-`gridFilter` ストアの変更を `$:` リアクティブステートメントで監視し、変更時に `search_notes` を発行する。グリッドビューからエディタに遷移して戻った場合、`gridFilter` の値は保持され、前回のフィルタ状態が復元される。
-
-### 4.8 Tauri IPC セキュリティ制約の反映
-
-`module:grid` は以下の Tauri IPC セキュリティ設定に従う（`tauri.conf.json` で強制）。
-
-- `fs` プラグイン: `deny`。`module:grid` がファイルシステムに直接アクセスすることは技術的に不可能。
-- `http` プラグイン: `deny`。外部 API 呼び出し（検索エンジンへの問い合わせ等）は禁止。
-- すべてのデータ取得は `invoke()` による IPC コマンド経由のみ許可。
-
-### 4.9 テスト要件
-
-| テストケース | テスト種別 | 検証内容 |
-|---|---|---|
-| グリッド初期表示 | E2E (Playwright) | 初回ロード時にデフォルト直近 7 日間フィルタが適用され、該当ノートが Masonry レイアウトで表示される |
-| 全文検索 | E2E (Playwright) | 検索テキスト入力後 300ms のデバウンス経過後に `search_notes` が発行され、結果がカードとして表示される |
-| タグフィルタ | E2E (Playwright) | タグ選択時にフィルタ結果が更新され、選択タグを含むノートのみ表示される |
-| 日付フィルタ | E2E (Playwright) | 日付範囲変更時にフィルタ結果が更新される |
-| カードクリック遷移 | E2E (Playwright) | カードクリック時に `/edit?focus=:filename` へ遷移し、エディタ画面が表示される |
-| 削除確認ダイアログ | E2E (Playwright) | 削除ボタンクリックで確認ダイアログが表示され、確認後にカードが消去される |
-| 空結果表示 | E2E (Playwright) | 検索結果 0 件時に空状態メッセージが表示される |
-| IPC 境界違反なし | E2E (Playwright) | `fetch` / `XMLHttpRequest` の不在確認（ネットワーク通信禁止） |
-
-### 4.10 ファイルディレクトリ構成
-
-```
-src/lib/components/grid/
-├── MasonryGrid.svelte       # Masonry レイアウトコンテナ
-├── NoteCard.svelte           # 個別カードコンポーネント
-├── SearchBar.svelte          # 全文検索テキスト入力
-├── TagFilter.svelte          # タグ選択フィルタ
-├── DateFilter.svelte         # 日付範囲フィルタ
-└── DeleteConfirmDialog.svelte # 削除確認ダイアログ
-
-src/lib/stores/
-└── gridFilter.ts             # フィルタ状態ストア
-
-src/lib/types/
-├── note.ts                   # NoteMetadata TypeScript ミラー型
-└── search.ts                 # SearchParams 型定義
-
-src/lib/api/
-└── notes.ts                  # IPC 呼び出し抽象層（list_notes, search_notes, delete_note）
-
-src/routes/
-└── +page.svelte              # GridPage（/ ルート）
-```
+---
 
 ## 5. Open Questions
 
-| ID | 質問 | 影響モジュール | 解決トリガー |
+| ID | 質問 | 影響コンポーネント | 判断に必要な情報 |
 |---|---|---|---|
-| OQ-GS-001 | `body_preview` の文字数上限をいくつにするか（現在 200 文字想定）。Masonry レイアウトのカード高さバランスに直接影響する。カード最大高さの CSS 制限との組み合わせも検討が必要。 | `module:grid`, `module:storage` | UI プロトタイプ作成時に視覚的バランスを評価 |
-| OQ-GS-002 | タグフィルタの AND/OR 条件をどちらにするか。現設計では AND 条件（選択タグをすべて含むノートのみ表示）としているが、OR 条件（いずれかのタグを含むノートを表示）の方がユースケースに適合する可能性がある。 | `module:grid`, `module:storage` | ユーザーテスト実施時 |
-| OQ-GS-003 | Masonry レイアウトの列数をウィンドウ幅に応じて動的に変更するブレークポイント（現在 900px / 600px を仮定）の最適値。Tauri ウィンドウのデフォルトサイズとの整合性を確認する必要がある。 | `module:grid` | UI プロトタイプ作成時 |
-| OQ-GS-004 | ノート削除の UI 配置について、グリッドビューのカード上の削除ボタンに加えて、エディタ画面内にも削除機能を設けるか。設ける場合、`delete_note` の呼び出し後にグリッドビューへの自動遷移が必要になる。 | `module:grid`, `module:editor` | UI 設計レビュー時（component_architecture OQ-CA-005 と同一論点） |
-| OQ-GS-005 | グリッドビューに戻った際のスクロール位置復元。エディタからの戻り遷移時に前回のスクロール位置を復元するか、先頭にリセットするか。SvelteKit の `afterNavigate` フックでの実装可否を検証する必要がある。 | `module:grid` | UI プロトタイプ作成時 |
-| OQ-GS-006 | 全文検索のハイライト表示。検索クエリに一致する `body_preview` 内のテキスト部分をハイライト表示するか。実装する場合、`search_notes` の戻り値にマッチ位置情報を含めるか、フロントエンド側で再マッチングするかの設計判断が必要。 | `module:grid`, `module:storage` | 初回実装完了後のユーザーフィードバック |
+| OQ-GS-001 | タグフィルタの一覧を直近 7 日間のノートから動的に構築するか、全ノートのタグ一覧を別途取得する API（`list_all_tags`）を新設するか。直近 7 日間のノートに存在しないタグは初期表示でフィルタ候補に現れない | `FilterBar.svelte`、`search.rs` | タグの活用頻度とユーザーの期待する検索範囲の確認 |
+| OQ-GS-002 | CSS `columns` による Masonry レイアウトで、ノート件数が多い場合（100 件以上）のスクロールパフォーマンスが WebKitGTK で十分か。仮想スクロール（windowing）の導入が必要か | `GridView.svelte`、`NoteCard.svelte` | WebKitGTK 環境での 100 件以上のカード描画ベンチマーク |
+| OQ-GS-003 | 検索結果でマッチした箇所のハイライト表示を行うか。行う場合、`search_notes` の応答に `matchPositions` フィールドを追加する必要がある | `NoteCard.svelte`、`search.rs`、`models.rs` | 全文検索 UI の詳細仕様の確定 |
+| OQ-GS-004 | カードクリック時のルーター遷移を `/?note={id}` のクエリパラメータ方式とするか、`/note/{id}` のパスパラメータ方式とするか。前者は `EditorView` のルートを変更しないが、後者はルーティング定義の追加が必要 | `NoteCard.svelte`、`App.svelte`、`EditorView.svelte` | ルーティングライブラリの選定結果（OQ-CA-005） |
+| OQ-GS-005 | `filtersStore` の状態をブラウザの URL クエリパラメータに同期するか。同期する場合、グリッドビューの検索・フィルタ状態がブックマーク可能になるが、Tauri デスクトップアプリでの URL バーの扱いを検討する必要がある | `filtersStore`、`GridView.svelte` | デスクトップアプリにおける URL ベース状態管理の必要性 |
