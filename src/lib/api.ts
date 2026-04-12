@@ -5,7 +5,7 @@ import type {
   CreateNoteResult,
   ReadNoteResult,
   ListNotesParams,
-  SearchNotesParams
+  SearchNotesParams,
 } from './types';
 
 export async function createNote(body: string, tags: string[]): Promise<CreateNoteResult> {

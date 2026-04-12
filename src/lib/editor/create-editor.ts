@@ -1,8 +1,7 @@
+import { EditorView, lineNumbers, highlightActiveLine, drawSelection, keymap } from '@codemirror/view';
 import { EditorState } from '@codemirror/state';
-import { EditorView, lineNumbers, highlightActiveLine, drawSelection } from '@codemirror/view';
+import { history, defaultKeymap, historyKeymap } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
-import { keymap } from '@codemirror/view';
 import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language';
 import { frontmatterDecorationPlugin } from './frontmatter-decoration';
 import { autosaveExtension, type SaveCallback } from './autosave';

@@ -1,13 +1,8 @@
-// Sprint 4/16 – Debounce utility with flush/cancel/pending
-
 export interface DebouncedFn<T extends (...args: any[]) => any> {
   (...args: Parameters<T>): void;
-  /** Immediately invoke the pending call, if any */
-  flush(): void;
-  /** Cancel the pending call */
-  cancel(): void;
-  /** Whether a call is currently pending */
-  pending(): boolean;
+  flush: () => void;
+  cancel: () => void;
+  pending: () => boolean;
 }
 
 export function debounce<T extends (...args: any[]) => any>(

@@ -1,65 +1,66 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { goto } from '$app/navigation';
-  import TopBar from '$lib/components/TopBar.svelte';
-  import SearchBar from '$lib/components/SearchBar.svelte';
-  import TagFilter from '$lib/components/TagFilter.svelte';
-  import MasonryGrid from '$lib/components/MasonryGrid.svelte';
-  import { getNotesState, loadNotes, removeNote } from '$lib/stores/notes.svelte';
+  import GridView from '$lib/components/GridView.svelte';
+  import { notes, loading, searchQuery, selectedTags, allTags, addToast } from '$lib/stores';
+  import { listNotes, searchNotes } from '$lib/api';
+  import { getDefaultDateRange } from '$lib/date-utils';
+  import { debounce } from '$lib/debounce';
 
-  const state = getNotesState();
+  let dateRange = $state(getDefaultDateRange());
+
+  const loadNotes = async () => {
+    loading.set(true);
+    try {
+      let query = '';
+      searchQuery.subscribe(v => query = v)();
+      let tags: string[] = [];
+      selectedTags.subscribe(v => tags = v)();
+
+      const params = {
+        date_from: dateRange.from,
+        date_to: dateRange.to,
+        tags: tags.length > 0 ? tags : undefined,
+      };
+
+      let result;
+      if (query.trim()) {
+        result = await searchNotes({ query: query.trim(), ...params });
+      } else {
+        result = await listNotes(params);
+      }
+      notes.set(result);
+
+      const tagSet = new Set<string>();
+      result.forEach(n => n.tags.forEach(t => tagSet.add(t)));
+      allTags.set([...tagSet].sort());
+    } catch (err) {
+      addToast('error', `ノートの読み込みに失敗しました: ${err}`);
+    } finally {
+      loading.set(false);
+    }
+  };
+
+  const debouncedLoad = debounce(loadNotes, 300);
 
   onMount(() => {
     loadNotes();
-
-    function handleKeydown(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
-        e.preventDefault();
-        goto('/new');
-      }
-    }
-
-    window.addEventListener('keydown', handleKeydown);
-    return () => window.removeEventListener('keydown', handleKeydown);
+    const unsubQuery = searchQuery.subscribe(() => debouncedLoad());
+    const unsubTags = selectedTags.subscribe(() => loadNotes());
+    return () => {
+      unsubQuery();
+      unsubTags();
+      debouncedLoad.cancel();
+    };
   });
 
-  async function handleDelete(filename: string) {
-    if (confirm(`「${filename}」を削除しますか？`)) {
-      await removeNote(filename);
-    }
+  function handleDateChange(from: string, to: string) {
+    dateRange = { from, to };
+    loadNotes();
   }
 </script>
 
-<TopBar showSettings showNew />
-<SearchBar />
-<TagFilter />
-
-<main class="grid-container">
-  {#if state.loading}
-    <div class="loading">読み込み中...</div>
-  {:else if state.error}
-    <div class="error">エラー: {state.error}</div>
-  {:else}
-    <MasonryGrid notes={state.notes} onDelete={handleDelete} />
-  {/if}
-</main>
-
-<style>
-  .grid-container {
-    flex: 1;
-    overflow-y: auto;
-  }
-
-  .loading,
-  .error {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    padding: 48px;
-    color: var(--color-text-muted);
-  }
-
-  .error {
-    color: var(--color-danger);
-  }
-</style>
+<GridView
+  {dateRange}
+  onDateChange={handleDateChange}
+  onRefresh={loadNotes}
+/>

@@ -1,8 +1,3 @@
-// Sprint 6/18 – Date formatting and default range utilities
-
-/**
- * Format a Date as YYYY-MM-DD for IPC date parameters.
- */
 export function formatDateParam(date: Date): string {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");
@@ -10,10 +5,6 @@ export function formatDateParam(date: Date): string {
   return `${y}-${m}-${d}`;
 }
 
-/**
- * Get default date range: 7 days back from today.
- * Returns { from, to } as YYYY-MM-DD strings.
- */
 export function getDefaultDateRange(days: number = 7): {
   from: string;
   to: string;
@@ -27,10 +18,6 @@ export function getDefaultDateRange(days: number = 7): {
   };
 }
 
-/**
- * Format an ISO-8601 created_at timestamp for display.
- * Shows "YYYY-MM-DD HH:MM" format.
- */
 export function formatCreatedAt(isoString: string): string {
   try {
     const d = new Date(isoString);
@@ -46,9 +33,6 @@ export function formatCreatedAt(isoString: string): string {
   }
 }
 
-/**
- * Format a relative time string (e.g., "2 hours ago", "3 days ago").
- */
 export function formatRelativeTime(isoString: string): string {
   try {
     const d = new Date(isoString);

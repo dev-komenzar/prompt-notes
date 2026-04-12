@@ -1,14 +1,6 @@
-// Sprint 7/19 – 1-click copy with navigator.clipboard.writeText()
-// Falls back to execCommand('copy') for older WebView contexts
+import { extractBody } from './frontmatter';
 
-/**
- * Copy text to the system clipboard.
- * Uses navigator.clipboard.writeText if available,
- * falls back to document.execCommand('copy').
- * Returns true on success, false on failure.
- */
 export async function copyToClipboard(text: string): Promise<boolean> {
-  // Primary: Clipboard API
   if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
     try {
       await navigator.clipboard.writeText(text);
@@ -18,7 +10,6 @@ export async function copyToClipboard(text: string): Promise<boolean> {
     }
   }
 
-  // Fallback: execCommand
   try {
     const textarea = document.createElement("textarea");
     textarea.value = text;
@@ -34,4 +25,9 @@ export async function copyToClipboard(text: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+export async function copyNoteBody(rawContent: string): Promise<boolean> {
+  const body = extractBody(rawContent);
+  return copyToClipboard(body);
 }

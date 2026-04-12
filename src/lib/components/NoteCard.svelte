@@ -1,165 +1,106 @@
 <script lang="ts">
-  import type { NoteEntry } from '../types';
-  import { formatDisplayDate } from '../utils/date-utils';
-  import { copyToClipboard } from '../utils/clipboard';
-  import { goto } from '$app/navigation';
+  import type { NoteEntry } from '$lib/types';
+  import { formatRelativeTime } from '$lib/date-utils';
 
-  interface Props {
-    note: NoteEntry;
-    onDelete: (filename: string) => void;
-  }
-
-  let { note, onDelete }: Props = $props();
-  let copied = $state(false);
-
-  function handleOpen() {
-    goto(`/edit/${encodeURIComponent(note.filename)}`);
-  }
-
-  async function handleCopy(e: MouseEvent) {
-    e.stopPropagation();
-    const ok = await copyToClipboard(note.body_preview);
-    if (ok) {
-      copied = true;
-      setTimeout(() => (copied = false), 1500);
-    }
-  }
-
-  function handleDelete(e: MouseEvent) {
-    e.stopPropagation();
-    onDelete(note.filename);
-  }
+  let { note, onClick, onDelete }:
+    { note: NoteEntry; onClick: () => void; onDelete: () => void }
+    = $props();
 </script>
 
-<div
-  class="note-card"
-  data-testid="note-card"
-  onclick={handleOpen}
-  onkeydown={(e) => e.key === 'Enter' && handleOpen()}
-  role="button"
-  tabindex="0"
->
-  <div class="card-header">
-    <time class="card-date">{formatDisplayDate(note.filename)}</time>
-    <div class="card-actions">
-      <button
-        class="action-btn copy-btn"
-        onclick={handleCopy}
-        title="コピー"
-        type="button"
-      >
-        {copied ? '✓' : '📋'}
-      </button>
-      <button
-        class="action-btn delete-btn"
-        onclick={handleDelete}
-        title="削除"
-        type="button"
-      >
-        🗑
-      </button>
-    </div>
-  </div>
-
+<div class="note-card" role="button" tabindex="0" onclick={onClick} onkeydown={(e) => { if (e.key === 'Enter') onClick(); }}>
   <div class="card-body">
     <p class="card-preview">{note.body_preview}</p>
   </div>
-
-  {#if note.tags.length > 0}
-    <div class="card-tags">
-      {#each note.tags as tag}
-        <span class="tag">#{tag}</span>
-      {/each}
+  <div class="card-footer">
+    <div class="card-meta">
+      <span class="card-time">{formatRelativeTime(note.created_at)}</span>
+      {#if note.tags.length > 0}
+        <div class="card-tags">
+          {#each note.tags as tag}
+            <span class="tag">{tag}</span>
+          {/each}
+        </div>
+      {/if}
     </div>
-  {/if}
+    <button class="card-delete" onclick={(e) => { e.stopPropagation(); onDelete(); }} title="Delete note">×</button>
+  </div>
 </div>
 
 <style>
   .note-card {
-    display: flex;
-    flex-direction: column;
-    background: var(--color-card-bg);
-    border-radius: var(--radius-md);
-    padding: 16px;
+    break-inside: avoid;
+    margin-bottom: 16px;
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: 14px;
     cursor: pointer;
-    transition: background var(--transition-fast), box-shadow var(--transition-fast);
-    box-shadow: var(--shadow-card);
-    text-align: left;
-    width: 100%;
-    border: 1px solid transparent;
+    transition: border-color 0.15s, transform 0.1s;
   }
 
   .note-card:hover {
-    background: var(--color-card-hover);
-    border-color: var(--color-border);
-  }
-
-  .card-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 8px;
-  }
-
-  .card-date {
-    font-size: 12px;
-    color: var(--color-text-muted);
-  }
-
-  .card-actions {
-    display: flex;
-    gap: 4px;
-    opacity: 0;
-    transition: opacity var(--transition-fast);
-  }
-
-  .note-card:hover .card-actions {
-    opacity: 1;
-  }
-
-  .action-btn {
-    padding: 4px 6px;
-    border-radius: var(--radius-sm);
-    font-size: 14px;
-    transition: background var(--transition-fast);
-  }
-
-  .action-btn:hover {
-    background: var(--color-bg-tertiary);
-  }
-
-  .delete-btn:hover {
-    background: rgba(243, 139, 168, 0.2);
-  }
-
-  .card-body {
-    flex: 1;
-    margin-bottom: 8px;
+    border-color: var(--color-primary);
+    transform: translateY(-1px);
   }
 
   .card-preview {
     font-size: 13px;
-    color: var(--color-text-secondary);
     line-height: 1.5;
-    overflow: hidden;
-    display: -webkit-box;
-    -webkit-line-clamp: 6;
-    -webkit-box-orient: vertical;
+    color: var(--color-text);
     white-space: pre-wrap;
     word-break: break-word;
+    max-height: 200px;
+    overflow: hidden;
+  }
+
+  .card-footer {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid var(--color-border);
+  }
+
+  .card-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .card-time {
+    font-size: 11px;
+    color: var(--color-text-muted);
   }
 
   .card-tags {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 4px;
   }
 
   .tag {
     font-size: 11px;
-    color: var(--color-tag);
-    background: rgba(148, 226, 213, 0.1);
-    padding: 2px 8px;
-    border-radius: 12px;
+    padding: 2px 6px;
+    background-color: rgba(137, 180, 250, 0.12);
+    color: var(--color-primary);
+    border-radius: var(--radius-sm);
+  }
+
+  .card-delete {
+    font-size: 16px;
+    color: var(--color-text-muted);
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    opacity: 0;
+    transition: opacity 0.15s, color 0.15s;
+  }
+
+  .note-card:hover .card-delete {
+    opacity: 1;
+  }
+
+  .card-delete:hover {
+    color: var(--color-danger);
   }
 </style>

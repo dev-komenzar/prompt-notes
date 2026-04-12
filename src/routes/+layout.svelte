@@ -1,23 +1,22 @@
 <script lang="ts">
   import '../app.css';
-  import type { Snippet } from 'svelte';
+  import Header from '$lib/components/Header.svelte';
+  import ToastContainer from '$lib/components/ToastContainer.svelte';
 
-  interface Props {
-    children: Snippet;
-  }
-
-  let { children }: Props = $props();
+  let { children } = $props();
 </script>
 
-<div class="app-shell" data-testid="app-root">
+<Header />
+<main class="main-content">
   {@render children()}
-</div>
+</main>
+<ToastContainer />
 
 <style>
-  .app-shell {
+  .main-content {
+    flex: 1;
+    overflow: hidden;
     display: flex;
     flex-direction: column;
-    height: 100vh;
-    overflow: hidden;
   }
 </style>
