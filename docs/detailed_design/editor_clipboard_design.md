@@ -31,434 +31,490 @@ codd:
 
 ## 1. Overview
 
-本設計書は PromptNotes アプリケーションにおける `module:editor` の詳細設計を定義する。エディタ画面は CodeMirror 6 を基盤とし、Markdown シンタックスハイライト付きの本文エディタ、frontmatter 領域の視覚的区別、1クリックコピーボタン、キーボードショートカットによる新規ノート作成を提供する。
+本設計書は PromptNotes の `module:editor` に属するエディタおよびクリップボード機能の詳細設計を定義する。上流の Component Architecture（detail:component_architecture）で規定されたコンポーネント分割・IPC 境界・所有権ルールを前提に、CodeMirror 6 エディタの内部構造、frontmatter 領域の視覚区別、1 クリックコピー、新規ノート作成ショートカット、自動保存トリガーの各機能を実装可能な粒度で設計する。
 
-### 設計思想
+### 対象コンポーネント
 
-PromptNotes は「タイトル不要・本文即記・グリッド振り返り」を設計思想とするローカルデスクトップノートアプリである。エディタ画面は本文のみのエディタとして設計され、タイトル入力欄は設けない。ユーザーは起動後即座に本文を記述し、1クリックで全文をクリップボードにコピーできる。
+| コンポーネント | ファイルパス | 責務 |
+|---|---|---|
+| `NoteCard.svelte` | `src/lib/components/NoteCard.svelte` | 表示/編集モードの切り替え制御、自動保存トリガー発火、`NoteEditor` / `CopyButton` / `DeleteButton` のコンテナ |
+| `NoteEditor.svelte` | `src/lib/components/NoteEditor.svelte` | CodeMirror 6 インスタンスのライフサイクル管理、Markdown シンタックスハイライト、frontmatter 背景色装飾 |
+| `CopyButton.svelte` | `src/lib/components/CopyButton.svelte` | 本文全体の 1 クリッククリップボードコピー、視覚フィードバック |
+| `DeleteButton.svelte` | `src/lib/components/DeleteButton.svelte` | ノート削除 UI |
+| `frontmatter.ts` | `src/lib/utils/frontmatter.ts` | フロントエンド側の表示用 frontmatter 軽量パース（読み取り専用） |
 
-### リリースブロッキング制約の適用
+### リリースブロッキング制約への準拠
 
-本設計書は以下の4つのリリースブロッキング制約を構造的に満たす。
+本設計書は以下の 4 つの非交渉条件を全セクションにわたって反映する。
 
-1. **CodeMirror 6 必須・Markdown シンタックスハイライトのみ（レンダリング禁止）・frontmatter 背景色区別**: CodeMirror 6 の `@codemirror/lang-markdown` 拡張によりシンタックスハイライトを提供する。Markdown のプレビューレンダリング（HTML 変換表示）は一切行わない。frontmatter 領域（`---` で囲まれた YAML ブロック）には `EditorView.theme` で専用の背景色（`#f0f4f8` ライトテーマ / `#1e293b` ダークテーマ）を適用し、本文と視覚的に区別する。
-2. **タイトル入力欄の禁止**: `EditorView.svelte` にはタイトルを入力するための `<input>` や `<textarea>` を配置しない。画面構成は FrontmatterBar（タグ編集のみ）、CodeMirror 6 エディタ本文、CopyButton の3要素のみで構成する。
-3. **1クリックコピーボタン**: `CopyButton.svelte` は `navigator.clipboard.writeText()` を使用してエディタ本文全体をクリップボードにコピーする。このボタンは常時表示であり、コピー成功時には視覚フィードバック（アイコン変化 + 1.5秒後に復帰）を提供する。この機能が未実装の場合リリース不可とする。
-4. **Cmd+N / Ctrl+N による新規ノート即座作成**: グローバルキーバインドとして `Cmd+N`（macOS）/ `Ctrl+N`（Linux）を登録し、`ipc.ts` の `createNote()` を呼び出した後、CodeMirror 6 エディタにフォーカスを移動する。レイテンシ目標は 100ms 以下。
-
-### ファイル操作の IPC 境界遵守
-
-`module:editor` のすべてのファイル操作（ノートの作成・読込・保存・削除）は Rust バックエンドの Tauri コマンドを経由する。フロントエンドからの直接ファイルシステムアクセスは構造的に禁止されており、`src/lib/ipc.ts` のラッパー関数のみを使用する。
-
----
+| # | 制約 | 準拠方法 |
+|---|---|---|
+| 1 | CodeMirror 6 必須。Markdown シンタックスハイライトのみ（レンダリング禁止）。frontmatter 領域は背景色で視覚的に区別必須。 | §2 の状態図および §4 で `NoteEditor.svelte` の拡張構成を規定し、`@codemirror/lang-markdown` によるハイライトのみを許可。`ViewPlugin` + `Decoration` による frontmatter 背景色装飾を必須実装として定義する。Markdown の HTML レンダリング / プレビューモードは一切実装しない。 |
+| 2 | タイトル入力欄は禁止。本文のみのエディタ画面であること。 | §4 で `NoteEditor.svelte` の DOM 構造を規定し、`<input>` / `<textarea>` 等のタイトル専用フィールドを持たないことを明記する。エディタ領域は CodeMirror 6 の `.cm-editor` 単体で構成する。 |
+| 3 | 1 クリックコピーボタンによる本文全体のクリップボードコピーはアプリの核心 UX。未実装ならリリース不可。 | §2 のシーケンス図および §4 で `CopyButton.svelte` → `tauri-commands.ts` → `commands/clipboard.rs` → Tauri `clipboard-manager` プラグインの一貫した IPC フローを定義する。Web Clipboard API (`navigator.clipboard`) の使用は禁止し、Rust バックエンド経由を強制する。 |
+| 4 | Cmd+N / Ctrl+N で即座に新規ノート作成しフォーカス移動必須。 | §2 のシーケンス図で `module:shell` の `GlobalShortcut` → `Header.svelte` → IPC `create_note` → `NoteCard` 編集モード → CodeMirror 6 フォーカスまでの全経路を定義する。200ms 以内の完了を §4 のパフォーマンス制約として規定する。 |
 
 ## 2. Mermaid Diagrams
 
-### 2.1 Editor モジュール コンポーネント構成
-
-```mermaid
-graph TD
-    subgraph EditorModule["module:editor — src/components/editor/"]
-        EV["EditorView.svelte<br/>─────────────<br/>CodeMirror 6 ホスト<br/>自動保存パイプライン<br/>Cmd+N キーバインド"]
-        NL["NoteList.svelte<br/>─────────────<br/>ノート一覧表示<br/>選択状態管理"]
-        FB["FrontmatterBar.svelte<br/>─────────────<br/>タグ編集 UI<br/>frontmatter 構成"]
-        CB["CopyButton.svelte<br/>─────────────<br/>1クリックコピー<br/>視覚フィードバック"]
-        CM6["CodeMirror 6 Instance<br/>─────────────<br/>@codemirror/lang-markdown<br/>frontmatter 背景色テーマ<br/>updateListener"]
-    end
-
-    EV --> NL
-    EV --> FB
-    EV --> CB
-    EV --> CM6
-
-    subgraph Stores["stores"]
-        NS["notes.ts<br/>(notesStore)"]
-        CS["config.ts<br/>(configStore)"]
-    end
-
-    subgraph IPC["src/lib/ipc.ts"]
-        createNote["createNote()"]
-        saveNote["saveNote()"]
-        readNote["readNote()"]
-        deleteNote["deleteNote()"]
-        listNotes["listNotes()"]
-    end
-
-    EV -->|"Cmd+N"| createNote
-    EV -->|"デバウンス 500ms"| saveNote
-    EV -->|"ノート選択"| readNote
-    EV -->|"削除操作"| deleteNote
-    NL -->|"一覧取得"| listNotes
-    CB -->|"navigator.clipboard.writeText()"| Clipboard["OS Clipboard"]
-
-    createNote --> NS
-    listNotes --> NS
-    readNote --> NS
-
-    style EditorModule fill:#1a365d,color:#fff
-    style IPC fill:#2d3748,color:#fff
-```
-
-**所有権と境界の説明:**
-
-- `EditorView.svelte` が `module:editor` のルートコンポーネントであり、CodeMirror 6 インスタンスのライフサイクル管理、自動保存パイプラインの制御、グローバルキーバインドの登録を排他的に担当する。
-- `NoteList.svelte`、`FrontmatterBar.svelte`、`CopyButton.svelte` は `EditorView.svelte` の子コンポーネントであり、他のモジュール（`grid`、`settings`）からの再利用は想定しない。
-- `CopyButton.svelte` は `navigator.clipboard.writeText()` を直接呼び出す唯一のコンポーネントである。クリップボード操作は OS WebView の標準 API を使用し、Tauri プラグインや Rust バックエンドは経由しない。
-- すべてのファイル I/O は `src/lib/ipc.ts` 経由で Rust バックエンドに委譲され、`module:editor` 内のコンポーネントが `@tauri-apps/api/core` を直接インポートすることはない。
-
-### 2.2 エディタ操作のステートマシン
+### 2.1 NoteCard 状態遷移図
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Empty: アプリ起動 / Cmd+N
+    [*] --> ViewMode: カード生成
 
-    Empty --> Editing: ユーザー入力開始
-    Editing --> Debouncing: docChanged イベント
-    Debouncing --> Saving: 500ms 経過
-    Debouncing --> Debouncing: 追加入力（タイマーリセット）
-    Saving --> Editing: 保存完了
-    Saving --> SaveError: 保存失敗
-
-    SaveError --> Editing: リトライ成功
-    SaveError --> Debouncing: ユーザー追加入力
-
-    Editing --> Loading: 別ノート選択
-    Loading --> Editing: read_note 完了
-
-    Editing --> Empty: Cmd+N（新規作成）
-    Editing --> Copying: コピーボタン押下
-    Copying --> Editing: コピー完了（1.5秒フィードバック）
-
-    state Debouncing {
-        [*] --> WaitingTimer
-        WaitingTimer --> [*]: 500ms タイムアウト
+    state ViewMode {
+        [*] --> Collapsed
+        Collapsed --> Collapsed: CopyButton 押下<br/>(モード遷移なし)
     }
+
+    state EditMode {
+        [*] --> EditorMounted
+        EditorMounted --> Editing: CodeMirror 6 フォーカス取得
+        Editing --> Editing: ユーザー入力
+    }
+
+    ViewMode --> EditMode: カードクリック
+    EditMode --> Saving: カード外クリック<br/>/ 別カードクリック<br/>/ Cmd+N
+    Saving --> ViewMode: save_note 成功<br/>(EditorView.destroy())
+    Saving --> EditMode: save_note 失敗<br/>(エラー表示、エディタ維持)
+
+    ViewMode --> [*]: delete_note 成功
+
+    note right of EditMode
+        同時に EditMode になれる
+        NoteCard は最大 1 つ。
+        EditorView インスタンスも最大 1 つ。
+    end note
+
+    note right of ViewMode
+        CopyButton は ViewMode でのみ表示。
+        本文全体をクリップボードにコピー。
+    end note
 ```
 
-**ステート遷移の実装上の意味:**
+**所有権と実装境界の説明:**
 
-- **Empty → Editing**: `Cmd+N` / `Ctrl+N` による新規ノート作成は `createNote()` IPC 呼び出し後、CodeMirror 6 の `EditorView.focus()` を呼び出し、即座に `Editing` ステートに遷移する。この遷移は 100ms 以下で完了する。
-- **Debouncing**: `setTimeout` / `clearTimeout` による 500ms デバウンス。追加入力があるたびにタイマーがリセットされ、最後の入力から 500ms 後に `saveNote()` が発行される。
-- **Saving**: `invoke('save_note')` の呼び出し中。この間に追加入力があった場合、保存完了後に再度デバウンスパイプラインが起動する。
-- **Copying**: `CopyButton` 押下で `navigator.clipboard.writeText()` を実行。成功時はチェックマークアイコンを 1.5秒表示して元に戻る。
+`NoteCard.svelte` は表示モード（ViewMode）と編集モード（EditMode）の 2 状態を管理するステートマシンである。状態遷移の制御は `NoteCard.svelte` が単一所有者として担い、`Feed.svelte` や他のコンポーネントが直接状態を操作することはない。
 
-### 2.3 クリップボードコピーシーケンス
+同時に編集モードになれる `NoteCard` は最大 1 つであり、この不変条件は `Feed.svelte` が `editingNoteId: string | null` を管理することで強制する。あるカードが編集モードに遷移するとき、`Feed.svelte` は既存の編集中カードに対して自動保存 → ViewMode 遷移を指示してから、新しいカードの EditMode 遷移を許可する。
+
+`CopyButton` は ViewMode 時にのみ表示される。編集中のコピー操作は CodeMirror 6 のネイティブ選択コピー（OS 標準の Cmd+C / Ctrl+C）に委ね、「本文全体のコピー」は ViewMode での 1 クリック操作として提供する。
+
+### 2.2 クリップボードコピー シーケンス図
 
 ```mermaid
 sequenceDiagram
-    participant User as ユーザー
+    actor User
     participant CB as CopyButton.svelte
-    participant EV as EditorView.svelte
-    participant CM6 as CodeMirror 6
-    participant Clip as navigator.clipboard
+    participant NC as NoteCard.svelte
+    participant TC as tauri-commands.ts
+    participant CmdClip as commands/clipboard.rs
+    participant ClipPlugin as Tauri clipboard-manager
 
-    User->>CB: クリックイベント
-    CB->>EV: getEditorContent()
-    EV->>CM6: view.state.doc.toString()
-    CM6-->>EV: body: string
-    EV-->>CB: body
-    CB->>Clip: writeText(body)
-    Clip-->>CB: Promise<void> resolved
-    CB->>CB: アイコン → ✓ チェックマーク
-    Note right of CB: 1.5秒後にアイコン復帰
-    CB->>CB: アイコン → 📋 コピーアイコン
+    User->>CB: コピーボタン 1 クリック
+    CB->>NC: getBodyContent()
+    NC-->>CB: bodyText (frontmatter 除去済み本文)
+    CB->>TC: copyToClipboard(bodyText)
+    TC->>CmdClip: invoke("copy_to_clipboard", { text: bodyText })
+    CmdClip->>ClipPlugin: clipboard.write_text(text)
+    ClipPlugin-->>CmdClip: Ok
+    CmdClip-->>TC: { success: true }
+    TC-->>CB: success
+    CB->>CB: アイコン変更 "✓"<br/>2 秒後に元のコピーアイコンに復帰
+
+    Note over CB: Web Clipboard API<br/>(navigator.clipboard) は使用禁止。<br/>Rust IPC 経由を強制。
 ```
 
-**実装境界:**
+**所有権と実装境界の説明:**
 
-- `CopyButton.svelte` はエディタ本文のみをコピーする。frontmatter（YAML ブロック）はコピー対象に含めない。`EditorView.svelte` が CodeMirror 6 の `view.state.doc.toString()` で取得した本文テキストを `CopyButton` に渡す。
-- `navigator.clipboard.writeText()` は Tauri の OS WebView 上で動作し、追加のプラグインや権限設定は不要である。
-- コピー失敗時（フォーカス喪失等）は `CopyButton` のアイコンを変更せず、エラー状態を視覚的に示す（赤色フラッシュ、500ms）。
+クリップボードコピーの IPC フローは `CopyButton.svelte` → `tauri-commands.ts` → `commands/clipboard.rs` → Tauri `clipboard-manager` プラグインの 4 段階で構成される。フロントエンドが `navigator.clipboard` API を直接呼び出すことは禁止であり、この制約は ESLint ルール `no-restricted-globals` で `navigator.clipboard` を禁止することで構造的に強制する。
 
----
+`CopyButton.svelte` がコピー対象とするのは **frontmatter を除去した本文テキスト** である。frontmatter の除去は `frontmatter.ts` の `extractBody(rawMarkdown): string` 関数で実行する。この関数は先頭の `---` 〜 `---` ブロックを除去し、残りのテキストを返却する読み取り専用操作であり、書き込み正規化は行わない。
+
+`commands/clipboard.rs` は `module:shell` の所有であり、`module:editor` はこのコマンドの利用者である。`CopyButton.svelte` は `tauri-commands.ts` の `copyToClipboard(text: string): Promise<void>` 関数のみをインポートし、Rust 側の実装詳細を知らない。
+
+### 2.3 新規ノート作成 → エディタフォーカス シーケンス図
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Shell as module:shell<br/>(GlobalShortcut)
+    participant Header as Header.svelte
+    participant Feed as Feed.svelte
+    participant NC_old as NoteCard.svelte<br/>(既存・編集中)
+    participant TC as tauri-commands.ts
+    participant CmdNotes as commands/notes.rs
+    participant NC_new as NoteCard.svelte<br/>(新規)
+    participant Editor as NoteEditor.svelte
+
+    User->>Shell: Cmd+N / Ctrl+N
+    Shell->>Header: emit("new-note")
+
+    opt 既存カードが編集中の場合
+        Header->>Feed: requestSaveAndClose()
+        Feed->>NC_old: triggerAutoSave()
+        NC_old->>TC: saveNote(filename, content)
+        TC->>CmdNotes: invoke("save_note", {...})
+        CmdNotes-->>TC: { success: true }
+        TC-->>NC_old: success
+        NC_old->>NC_old: destroy EditorView<br/>→ ViewMode
+    end
+
+    Header->>TC: createNote()
+    TC->>CmdNotes: invoke("create_note")
+    CmdNotes-->>TC: { filename, path }
+    TC-->>Header: NoteMetadata
+
+    Header->>Feed: prependNote(metadata)
+    Feed->>NC_new: create (edit mode)
+    NC_new->>Editor: mount CodeMirror 6
+    Editor->>Editor: focus .cm-content
+
+    Note over User,Editor: ≤ 200ms ショートカット → エディタフォーカス
+```
+
+**所有権と実装境界の説明:**
+
+Cmd+N / Ctrl+N ショートカットは `module:shell` が `tauri-plugin-global-shortcut` を通じて登録し、`new-note` イベントを `Header.svelte` に emit する。`Header.svelte` はイベントを受信して `tauri-commands.ts` 経由で `create_note` IPC を発行する。
+
+既存カードが編集中の場合は、新規ノート作成前に自動保存 → EditorView 破棄 → ViewMode 遷移を実行する。この前処理を含めても 200ms 以内を目標とする。`create_note` コマンドは固定文字列 `"---\ntags: []\n---\n"` を書き込む同期処理であるため、IPC のラウンドトリップ時間を含めても 50ms 以内に完了する。
+
+CodeMirror 6 の初期化は最小拡張セットで実行する。フォーカスは `EditorView` の `focus()` メソッドで `.cm-content` に移動し、ユーザーは即座に入力を開始できる。
+
+### 2.4 エディタ内部コンポーネント構造図
+
+```mermaid
+graph TB
+    subgraph "NoteCard.svelte (module:editor)"
+        NC_STATE["state: 'view' | 'edit'"]
+        NC_META["props: NoteMetadata"]
+
+        subgraph "ViewMode 時に表示"
+            BODY_PREVIEW["本文プレビュー<br/>(frontmatter 除去済み)"]
+            TAG_DISPLAY["タグ表示<br/>(frontmatter.ts で抽出)"]
+            TIMESTAMP["タイムスタンプ表示<br/>(timestamp.ts で変換)"]
+            COPY_BTN["CopyButton.svelte"]
+            DEL_BTN["DeleteButton.svelte"]
+        end
+
+        subgraph "EditMode 時に表示"
+            EDITOR["NoteEditor.svelte<br/>(CodeMirror 6)"]
+        end
+    end
+
+    subgraph "NoteEditor.svelte 内部構造"
+        CM["EditorView"]
+        subgraph "Extensions"
+            MD_LANG["@codemirror/lang-markdown<br/>+ @codemirror/language-data"]
+            FM_DECO["FrontmatterDecoration<br/>(ViewPlugin + Decoration)"]
+            KEYMAP["keymap: defaultKeymap<br/>+ markdownKeymap"]
+            THEME["EditorView.theme({...})<br/>基本スタイル"]
+        end
+        CM --> MD_LANG
+        CM --> FM_DECO
+        CM --> KEYMAP
+        CM --> THEME
+    end
+
+    NC_STATE -->|"'view'"| BODY_PREVIEW
+    NC_STATE -->|"'view'"| TAG_DISPLAY
+    NC_STATE -->|"'view'"| TIMESTAMP
+    NC_STATE -->|"'view'"| COPY_BTN
+    NC_STATE -->|"'view'"| DEL_BTN
+    NC_STATE -->|"'edit'"| EDITOR
+
+    COPY_BTN -->|"tauri-commands.ts"| IPC_CLIP["commands/clipboard.rs"]
+    DEL_BTN -->|"tauri-commands.ts"| IPC_DEL["commands/notes.rs<br/>(delete_note)"]
+```
+
+**所有権と実装境界の説明:**
+
+`NoteCard.svelte` はエディタモジュールのルートコンテナであり、`NoteEditor.svelte`、`CopyButton.svelte`、`DeleteButton.svelte` を子コンポーネントとして保持する。各子コンポーネントは `NoteCard.svelte` からのみインスタンス化され、`Feed.svelte` や `Header.svelte` が直接生成することはない。
+
+`NoteEditor.svelte` 内部の CodeMirror 6 拡張は 4 つの要素で構成される。このうち `FrontmatterDecoration` は本設計書固有の実装であり、他の拡張は CodeMirror 6 標準パッケージからインポートする。タイトル入力欄は存在せず、エディタ領域は `EditorView` 単体で構成される。
 
 ## 3. Ownership Boundaries
 
-### 3.1 module:editor 内部の所有権
+### 3.1 モジュール内所有権
 
-| コンポーネント | 排他的責務 | 入力ソース | 出力先 |
-|---|---|---|---|
-| `EditorView.svelte` | CodeMirror 6 の初期化・破棄、自動保存デバウンス、キーバインド登録、子コンポーネントへのデータ配信 | `notesStore`（選択ノート）、`ipc.ts`（IPC 応答） | `ipc.ts`（`saveNote`、`createNote`）、CodeMirror 6 |
-| `NoteList.svelte` | ノート一覧のレンダリング、選択状態の管理、削除操作の開始 | `notesStore`（ノート一覧） | `EditorView`（選択イベント）、`ipc.ts`（`deleteNote`） |
-| `FrontmatterBar.svelte` | タグの表示・追加・削除 UI | `EditorView`（現在のノートの frontmatter） | `EditorView`（タグ変更イベント → 自動保存パイプラインに合流） |
-| `CopyButton.svelte` | 本文全体のクリップボードコピー、視覚フィードバック | `EditorView`（`getEditorContent()` コールバック） | `navigator.clipboard` |
-| CodeMirror 6 Instance | Markdown シンタックスハイライト、テキスト編集、`updateListener` による変更通知 | `EditorView`（ドキュメント設定・テーマ・拡張） | `EditorView`（`docChanged` イベント） |
+`module:editor` 内の各コンポーネントが所有する責務を以下に定義する。
 
-### 3.2 CodeMirror 6 拡張の所有権
-
-CodeMirror 6 のインスタンス構成は `EditorView.svelte` が排他的に担当する。以下の拡張セットを固定し、他のコンポーネントが拡張を追加・変更することはない。
-
-| 拡張 | パッケージ | 用途 |
+| コンポーネント | 単一所有する責務 | 禁止事項 |
 |---|---|---|
-| `markdown()` | `@codemirror/lang-markdown` | Markdown シンタックスハイライト |
-| `syntaxHighlighting(defaultHighlightStyle)` | `@codemirror/language` | 構文ハイライトのスタイル適用 |
-| `EditorView.updateListener` | `@codemirror/view` | `docChanged` イベント検知 → 自動保存トリガー |
-| `keymap.of([...])` | `@codemirror/view` | エディタ内キーバインド（基本編集操作） |
-| `EditorView.theme({...})` | `@codemirror/view` | frontmatter 領域の背景色適用 |
-| `history()` | `@codemirror/commands` | Undo / Redo |
-| `EditorView.lineWrapping` | `@codemirror/view` | 行の折り返し |
+| `NoteCard.svelte` | 表示/編集モード切り替え、自動保存トリガー発火、子コンポーネントへの `NoteMetadata` 供給 | IPC コマンドの直接呼び出し（`tauri-commands.ts` 経由を強制）、frontmatter の書き込み正規化 |
+| `NoteEditor.svelte` | CodeMirror 6 インスタンスのライフサイクル（生成・破棄）、Markdown シンタックスハイライト拡張の構成、frontmatter 背景色装飾の適用 | Markdown の HTML レンダリング / プレビュー、タイトル入力欄の実装、`invoke` の直接呼び出し |
+| `CopyButton.svelte` | 1 クリックコピー UI、コピー成功/失敗の視覚フィードバック（アイコン変化） | `navigator.clipboard` API の使用、frontmatter を含むテキストのコピー |
+| `DeleteButton.svelte` | 削除操作 UI、確認ダイアログの表示（OQ-ARCH-003 確定後） | ファイルシステムへの直接アクセス |
+| `frontmatter.ts` | 表示用 frontmatter 軽量パース（タグ抽出、本文分離）。読み取り専用 | frontmatter の書き込み・再構成・正規化（Rust 側 `storage/frontmatter.rs` が正規所有者） |
 
-**Markdown プレビュー（HTML レンダリング）は拡張として追加しない。** これは `module:editor` のリリースブロッキング制約であり、`@codemirror/lang-markdown` が提供するシンタックスハイライト（見出し・太字・リスト等の色分け）のみを使用する。
+### 3.2 モジュール間の依存と所有権境界
 
-### 3.3 frontmatter 領域の視覚区別
+`module:editor` は他モジュールが所有する以下のリソースに依存する。再実装ドリフトを防止するため、インポートのみを許可し、同等機能の再実装を禁止する。
 
-frontmatter 領域の背景色適用は CodeMirror 6 の `Decoration` API と `ViewPlugin` を使用する。`EditorView.svelte` 内で以下のプラグインを定義する。
+| 依存先 | 所有モジュール | `module:editor` の利用方法 | 禁止事項 |
+|---|---|---|---|
+| `tauri-commands.ts` | `module:shell`（API 定義管理） | `saveNote()`, `deleteNote()`, `copyToClipboard()`, `readNote()` をインポートして呼び出し | `invoke` の直接呼び出し、新しい IPC ラッパーの独自定義 |
+| `timestamp.ts` | `module:storage`（フォーマット仕様決定） | `filenameToDate(filename): Date` をインポートしてタイムスタンプ表示に使用 | ファイル名パースロジックの再実装 |
+| `notes.ts` store | `module:feed` | ノート一覧データの購読（`$notes` による reactive 参照） | ストアへの直接書き込み（書き込みは `Feed.svelte` 経由で `module:feed` が制御） |
+| `commands/clipboard.rs` | `module:shell` | `copy_to_clipboard` IPC コマンドの利用（`tauri-commands.ts` 経由） | クリップボードプラグインの直接呼び出し |
+| `commands/notes.rs` | `module:storage` | `save_note`, `delete_note`, `read_note` IPC コマンドの利用 | ファイル CRUD の独自実装 |
 
-```typescript
-// frontmatter 検出ロジック（EditorView.svelte 内に局所化）
-const frontmatterPlugin = ViewPlugin.fromClass(class {
-  decorations: DecorationSet;
-  constructor(view: EditorView) {
-    this.decorations = this.buildDecorations(view);
-  }
-  update(update: ViewUpdate) {
-    if (update.docChanged || update.viewportChanged) {
-      this.decorations = this.buildDecorations(update.view);
-    }
-  }
-  buildDecorations(view: EditorView): DecorationSet {
-    // ドキュメント先頭の ---...--- ブロックを検出し、
-    // 行単位で背景色デコレーションを適用
-  }
-}, { decorations: v => v.decorations });
+### 3.3 frontmatter 二重パースにおける所有権分離
+
+frontmatter のパースは 2 つのレイヤーで行われるが、責務は明確に分離する。
+
+| レイヤー | ファイル | 所有モジュール | 操作 | 正規性 |
+|---|---|---|---|---|
+| フロントエンド | `frontmatter.ts` | `module:editor` | 読み取り専用パース（タグ抽出、本文分離） | 近似値（表示用） |
+| バックエンド | `storage/frontmatter.rs` | `module:storage` | 読み書き（パース、正規化、再シリアライズ） | **正（source of truth）** |
+
+不整合が検出された場合（例: フロントエンドのパース結果とバックエンドのパース結果でタグが異なる場合）は、Rust 側の結果で上書きする。フロントエンド側が frontmatter を組み立てて保存することは禁止であり、`saveNote()` に渡すのは CodeMirror 6 から取得した生の Markdown テキスト全体である。
+
+### 3.4 CopyButton のコピー対象テキスト所有権
+
+`CopyButton.svelte` がクリップボードにコピーするテキストは **frontmatter を除去した本文** である。除去ロジックは `frontmatter.ts` の `extractBody()` 関数が単一所有する。
+
+```
+extractBody(rawMarkdown: string): string
 ```
 
-frontmatter プラグインの所有者は `EditorView.svelte` であり、他のコンポーネントからの干渉はない。背景色は CSS 変数 `--frontmatter-bg` で定義し、ライトテーマ（`#f0f4f8`）とダークテーマ（`#1e293b`）を切り替える。
-
-### 3.4 クリップボード操作の所有権
-
-クリップボードへの書き込み操作は `CopyButton.svelte` が唯一の実行者である。
-
-- `CopyButton` は `navigator.clipboard.writeText()` のみを使用する。`document.execCommand('copy')` は使用しない。
-- コピー対象は CodeMirror 6 の `view.state.doc.toString()` で取得した本文テキストであり、frontmatter YAML ブロックを含めない。
-- `EditorView.svelte` は `getEditorContent(): string` メソッドを `CopyButton` に公開し、CodeMirror インスタンスへの直接アクセスを `CopyButton` に許可しない。
-
-### 3.5 キーバインドの所有権
-
-| キーバインド | スコープ | 所有者 | 実装方式 |
-|---|---|---|---|
-| `Cmd+N` / `Ctrl+N` | グローバル（アプリ全体） | `EditorView.svelte` | `window.addEventListener('keydown', ...)` |
-| `Cmd+Z` / `Ctrl+Z` (Undo) | エディタフォーカス中 | CodeMirror 6 `history()` | `keymap.of([...defaultKeymap, ...historyKeymap])` |
-| `Cmd+Shift+Z` / `Ctrl+Y` (Redo) | エディタフォーカス中 | CodeMirror 6 `history()` | 同上 |
-
-`Cmd+N` / `Ctrl+N` はグローバルキーバインドとして `EditorView.svelte` の `onMount` で `window` に登録し、`onDestroy` で解除する。グリッド画面や設定画面に遷移していても新規ノート作成が可能であるため、`App.svelte` レベルでの登録も検討対象だが、ノート作成後にエディタ画面へ遷移してフォーカスを移す責務は `EditorView` が持つため、`EditorView.svelte` が所有する。
-
-### 3.6 共有型との関係
-
-`module:editor` は `src/lib/types.ts`（型定義の単一ソース）から以下の型をインポートする。editor モジュール固有の型を `types.ts` に追加することはせず、エディタ内部の状態型（デバウンスタイマー、コピーフィードバック状態等）はコンポーネントローカルに定義する。
-
-| 型名 | 使用箇所 | 用途 |
-|---|---|---|
-| `NoteMetadata` | `NoteList.svelte` | ノート一覧表示 |
-| `Note` | `EditorView.svelte` | `readNote` 応答の受け取り |
-| `NoteFilter` | `NoteList.svelte` | `listNotes` のフィルタパラメータ |
-
----
+この関数は先頭の `---\n...---\n` ブロックを正規表現 `/^---\n[\s\S]*?\n---\n/` で除去し、残りのテキストを返す。frontmatter が存在しない場合は入力テキストをそのまま返す。`CopyButton.svelte` はこの関数の戻り値を `copyToClipboard()` に渡し、独自の文字列加工を行わない。
 
 ## 4. Implementation Implications
 
-### 4.1 CodeMirror 6 初期化コード
+### 4.1 CodeMirror 6 拡張構成
 
-`EditorView.svelte` の `onMount` 内で CodeMirror 6 を初期化する。以下は構成の全体像である。
+`NoteEditor.svelte` の `EditorView` は以下の拡張セットで初期化する。
 
 ```typescript
-import { EditorView, keymap, lineWrapping } from '@codemirror/view';
-import { EditorState } from '@codemirror/state';
-import { markdown } from '@codemirror/lang-markdown';
-import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language';
-import { history, historyKeymap, defaultKeymap } from '@codemirror/commands';
+import { EditorView, keymap } from "@codemirror/view";
+import { EditorState } from "@codemirror/state";
+import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
+import { languages } from "@codemirror/language-data";
+import { defaultKeymap } from "@codemirror/commands";
+import { syntaxHighlighting, defaultHighlightStyle } from "@codemirror/language";
+import { frontmatterDecoration } from "./frontmatter-decoration";
 
-let editorView: EditorView;
-let editorContainer: HTMLDivElement;
+const extensions = [
+  markdown({ base: markdownLanguage, codeLanguages: languages }),
+  syntaxHighlighting(defaultHighlightStyle),
+  keymap.of(defaultKeymap),
+  frontmatterDecoration(),
+  EditorView.theme({
+    "&": { height: "100%", fontSize: "14px" },
+    ".cm-content": { fontFamily: "monospace", padding: "12px" },
+    ".cm-focused": { outline: "none" },
+  }),
+  EditorView.lineWrapping,
+];
+```
+
+**禁止される拡張:**
+- `@codemirror/lang-html` やその他の HTML レンダリング関連拡張
+- Markdown プレビュー / WYSIWYG プラグイン
+- リッチテキスト装飾（太字・イタリックのインラインレンダリング）
+
+本設計は制約 1「Markdown シンタックスハイライトのみ（レンダリング禁止）」に準拠する。CodeMirror 6 はプレーンテキストエディタとして機能し、Markdown 構文要素（`#`, `**`, `` ` `` 等）をシンタックスハイライトで色分け表示するのみとする。
+
+### 4.2 frontmatter 背景色装飾の実装
+
+frontmatter 領域（`---` 〜 `---`）を視覚的に区別するため、`ViewPlugin` と `Decoration` を組み合わせたカスタム拡張を実装する。
+
+```typescript
+import { ViewPlugin, Decoration, DecorationSet, EditorView, ViewUpdate } from "@codemirror/view";
+
+const frontmatterMark = Decoration.line({ class: "cm-frontmatter-line" });
+
+const frontmatterDecoration = () => ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet;
+
+    constructor(view: EditorView) {
+      this.decorations = this.buildDecorations(view);
+    }
+
+    update(update: ViewUpdate) {
+      if (update.docChanged || update.viewportChanged) {
+        this.decorations = this.buildDecorations(update.view);
+      }
+    }
+
+    buildDecorations(view: EditorView): DecorationSet {
+      const doc = view.state.doc;
+      const text = doc.toString();
+      const match = text.match(/^---\n[\s\S]*?\n---/);
+      if (!match) return Decoration.none;
+
+      const endPos = match[0].length;
+      const decorations = [];
+
+      for (let pos = 0; pos <= endPos; ) {
+        const line = doc.lineAt(pos);
+        decorations.push(frontmatterMark.range(line.from));
+        pos = line.to + 1;
+      }
+
+      return Decoration.set(decorations);
+    }
+  },
+  { decorations: (v) => v.decorations }
+);
+```
+
+対応する CSS:
+
+```css
+.cm-frontmatter-line {
+  background-color: rgba(59, 130, 246, 0.08);
+}
+```
+
+この背景色は frontmatter 領域の各行に適用され、ユーザーが frontmatter 部分と本文部分を一目で区別できるようにする。背景色は半透明の青系色で、ダークモード非対応の現仕様では固定値とする。本設計は制約 1「frontmatter 領域は背景色で視覚的に区別必須」に準拠する。
+
+### 4.3 タイトル入力欄の不在
+
+`NoteEditor.svelte` の DOM 構造は以下のとおりである。
+
+```svelte
+<div class="note-editor">
+  <div bind:this={editorContainer} class="editor-container"></div>
+</div>
+```
+
+エディタ画面は `EditorView` が生成する `.cm-editor` 要素のみで構成される。`<input>`, `<textarea>`, `<h1>` 等のタイトル専用フィールドは一切存在しない。ノートのタイトルは概念として存在せず、ファイル名はタイムスタンプ（`YYYY-MM-DDTHHMMSS.md`）から自動生成される。本設計は制約 2「タイトル入力欄は禁止。本文のみのエディタ画面であること」に準拠する。
+
+### 4.4 CopyButton の実装仕様
+
+`CopyButton.svelte` は以下の動作を実装する。
+
+| 項目 | 仕様 |
+|---|---|
+| 表示条件 | `NoteCard` が ViewMode のときのみ表示 |
+| コピー対象 | frontmatter を除去した本文全体（`frontmatter.ts` の `extractBody()` で生成） |
+| IPC 経路 | `tauri-commands.ts` の `copyToClipboard(text)` → `commands/clipboard.rs` の `copy_to_clipboard` → Tauri `clipboard-manager` プラグイン |
+| 視覚フィードバック | コピー成功時: アイコンを「✓」に変更し、`text-green-500` クラスを適用。2,000ms 後にデフォルトのコピーアイコンに復帰 |
+| エラー時 | コピー失敗時: アイコンを「✕」に変更し、`text-red-500` クラスを適用。3,000ms 後にデフォルトに復帰。コンソールにエラーをログ出力 |
+| 連打防止 | フィードバック表示中（2,000ms / 3,000ms）はボタンを `disabled` にし、重複 IPC 呼び出しを防止 |
+
+```svelte
+<button
+  class="copy-button"
+  on:click={handleCopy}
+  disabled={copying}
+  aria-label="本文をコピー"
+>
+  {#if copyState === 'success'}
+    <CheckIcon class="text-green-500" />
+  {:else if copyState === 'error'}
+    <XIcon class="text-red-500" />
+  {:else}
+    <CopyIcon />
+  {/if}
+</button>
+```
+
+本設計は制約 3「1 クリックコピーボタンによる本文全体のクリップボードコピーはアプリの核心 UX。未実装ならリリース不可」に準拠する。
+
+### 4.5 新規ノート作成ショートカットの実装
+
+Cmd+N（macOS）/ Ctrl+N（Linux）ショートカットの登録と処理フローを以下に定義する。
+
+| ステップ | 担当 | 処理内容 | 目標レイテンシ |
+|---|---|---|---|
+| 1. ショートカット登録 | `module:shell` (`main.rs`) | `tauri-plugin-global-shortcut` で `CmdOrCtrl+N` を登録し、`new-note` イベントを WebView に emit | 起動時 1 回 |
+| 2. イベント受信 | `Header.svelte` | `listen("new-note")` でイベントを受信し、新規ノート作成フローを開始 | < 5ms |
+| 3. 既存編集の保存 | `Feed.svelte` | 編集中のカードがあれば自動保存 → ViewMode 遷移 → EditorView 破棄 | < 50ms |
+| 4. IPC 呼び出し | `tauri-commands.ts` | `createNote()` → `invoke("create_note")` | < 30ms |
+| 5. Rust 処理 | `commands/notes.rs` | ファイル名生成 → 空 frontmatter 書き込み → レスポンス返却 | < 20ms |
+| 6. カード生成 | `Feed.svelte` → `NoteCard.svelte` | フィード先頭に新規カードを prepend し、EditMode で生成 | < 30ms |
+| 7. エディタマウント | `NoteEditor.svelte` | CodeMirror 6 初期化 → `.cm-content` にフォーカス移動 | < 65ms |
+
+合計 200ms 以内を目標とする。本設計は制約 4「Cmd+N / Ctrl+N で即座に新規ノート作成しフォーカス移動必須」に準拠する。
+
+### 4.6 自動保存の実装
+
+自動保存は `NoteCard.svelte` が以下のトリガーで発火する。
+
+| トリガー | 条件 | 処理 |
+|---|---|---|
+| カード外クリック | EditMode 中にカード外の領域をクリック | `getContent()` → `saveNote()` → ViewMode 遷移 |
+| 別カードクリック | EditMode 中に別の `NoteCard` をクリック | 現在のカードの `getContent()` → `saveNote()` → ViewMode 遷移 → 新カードの EditMode 遷移 |
+| Cmd+N / Ctrl+N | EditMode 中にショートカット押下 | 現在のカードの `getContent()` → `saveNote()` → ViewMode 遷移 → 新規ノート作成フロー |
+
+`saveNote()` は `tauri-commands.ts` 経由で `save_note` IPC コマンドを呼び出す。送信するのは CodeMirror 6 の `EditorView.state.doc.toString()` で取得した生の Markdown テキスト全体であり、frontmatter の組み立てや正規化はフロントエンドでは行わない。Rust 側の `storage/frontmatter.rs` が frontmatter のパースと正規化を担当する。
+
+自動保存の目標レイテンシは 100ms 以内である。
+
+### 4.7 EditorView ライフサイクル管理
+
+`NoteEditor.svelte` は Svelte の `onMount` / `onDestroy` ライフサイクルで CodeMirror 6 インスタンスを管理する。
+
+```typescript
+let editorView: EditorView | null = null;
 
 onMount(() => {
-  const state = EditorState.create({
-    doc: '',
-    extensions: [
-      markdown(),
-      syntaxHighlighting(defaultHighlightStyle),
-      history(),
-      keymap.of([...defaultKeymap, ...historyKeymap]),
-      lineWrapping,
-      frontmatterPlugin,  // frontmatter 背景色プラグイン
-      EditorView.updateListener.of((update) => {
-        if (update.docChanged) {
-          debouncedSave();
-        }
-      }),
-      EditorView.theme({
-        '&': { height: '100%', fontSize: '14px' },
-        '.cm-content': { fontFamily: 'monospace', padding: '16px' },
-        '.cm-scroller': { overflow: 'auto' },
-      }),
-    ],
-  });
-
-  editorView = new EditorView({ state, parent: editorContainer });
-});
-
-onDestroy(() => {
-  editorView?.destroy();
-});
-```
-
-CodeMirror 6 は仮想 DOM を使用しないため、Svelte のリアクティビティシステムと競合しない。`editorView` は Svelte ストアではなくローカル変数として保持し、ドキュメントの読み書きは `editorView.state.doc` / `editorView.dispatch()` で直接操作する。
-
-### 4.2 自動保存パイプラインの実装
-
-```typescript
-let saveTimer: ReturnType<typeof setTimeout> | null = null;
-let currentNoteId: string | null = null;
-
-function debouncedSave() {
-  if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(async () => {
-    if (!currentNoteId) return;
-    const body = editorView.state.doc.toString();
-    const tags = getCurrentTags(); // FrontmatterBar から取得
-    await saveNote(currentNoteId, { tags }, body);
-  }, 500);
-}
-```
-
-- デバウンスタイマーは `EditorView.svelte` のコンポーネントスコープに閉じる。
-- `FrontmatterBar` のタグ変更も `debouncedSave()` を呼び出し、同一パイプラインに合流する。別の保存経路は設けない。
-- 保存中に追加入力があった場合、保存完了後に `updateListener` が再度 `debouncedSave()` を呼び出し、最新の内容で再保存される。
-
-### 4.3 CopyButton の実装
-
-```typescript
-// CopyButton.svelte
-export let getContent: () => string;
-
-let copied = false;
-let errorFlash = false;
-
-async function handleCopy() {
-  try {
-    const text = getContent();
-    await navigator.clipboard.writeText(text);
-    copied = true;
-    setTimeout(() => { copied = false; }, 1500);
-  } catch {
-    errorFlash = true;
-    setTimeout(() => { errorFlash = false; }, 500);
-  }
-}
-```
-
-- `getContent` プロップは `EditorView.svelte` から渡されるコールバックであり、frontmatter を除いた本文テキストを返す。
-- コピー成功時: ボタンアイコンがチェックマーク（✓）に切り替わり、1.5秒後にコピーアイコン（📋）に復帰する。
-- コピー失敗時: ボタンが赤色フラッシュし、500ms で元に戻る。
-
-### 4.4 Cmd+N / Ctrl+N のグローバルキーバインド実装
-
-```typescript
-function handleGlobalKeydown(e: KeyboardEvent) {
-  const isMac = navigator.platform.includes('Mac');
-  const modifier = isMac ? e.metaKey : e.ctrlKey;
-  if (modifier && e.key === 'n') {
-    e.preventDefault();
-    handleCreateNote();
-  }
-}
-
-async function handleCreateNote() {
-  const metadata = await createNote();
-  currentNoteId = metadata.id;
-  editorView.dispatch({
-    changes: { from: 0, to: editorView.state.doc.length, insert: '' }
+  editorView = new EditorView({
+    state: EditorState.create({
+      doc: initialContent,
+      extensions,
+    }),
+    parent: editorContainer,
   });
   editorView.focus();
-  // notesStore を更新して NoteList に反映
-  await refreshNoteList();
-}
-
-onMount(() => {
-  window.addEventListener('keydown', handleGlobalKeydown);
 });
+
 onDestroy(() => {
-  window.removeEventListener('keydown', handleGlobalKeydown);
+  if (editorView) {
+    editorView.destroy();
+    editorView = null;
+  }
 });
 ```
 
-- `createNote()` IPC 呼び出しから `editorView.focus()` までの全体レイテンシは 100ms 以下を目標とする。Rust 側の `create_note` コマンドは `tokio::fs::File::create` で空の `.md` ファイルを作成するのみであり、数 ms で完了する。
-- `e.preventDefault()` でブラウザデフォルトの新規ウィンドウ動作を抑制する。
+カード遷移時に EditorView を destroy → recreate する方式を採用する（OQ-ARCH-001 の暫定方針に準拠）。非表示で保持・再利用する方式は採用しない。これにより、メモリ消費を最小化し、古い状態がリークするリスクを排除する。
 
-### 4.5 frontmatter 本文分離ロジック
+### 4.8 ESLint による構造的制約の強制
 
-エディタ内の Markdown テキストには frontmatter ブロック（`---` で囲まれた YAML）が含まれる場合がある。以下の分離ロジックを `EditorView.svelte` に実装する。
+`module:editor` に対する構造的制約を ESLint ルールで強制する。
 
-```typescript
-function extractBody(doc: string): string {
-  const match = doc.match(/^---\n[\s\S]*?\n---\n?/);
-  if (match) {
-    return doc.slice(match[0].length);
+```json
+{
+  "rules": {
+    "no-restricted-imports": ["error", {
+      "paths": [
+        {
+          "name": "@tauri-apps/plugin-fs",
+          "message": "Direct filesystem access from frontend is prohibited. Use tauri-commands.ts IPC wrappers."
+        },
+        {
+          "name": "@tauri-apps/plugin-clipboard-manager",
+          "message": "Direct clipboard access is prohibited. Use tauri-commands.ts copyToClipboard()."
+        }
+      ]
+    }],
+    "no-restricted-globals": ["error", {
+      "name": "navigator.clipboard",
+      "message": "Web Clipboard API is prohibited. Use tauri-commands.ts copyToClipboard()."
+    }]
   }
-  return doc;
 }
 ```
 
-- この関数は `CopyButton` 用の `getContent` コールバックで使用し、クリップボードにコピーする際に frontmatter を除外する。
-- `save_note` IPC 呼び出し時には、frontmatter は `FrontmatterBar` の状態から構築し、本文は `extractBody()` で取得したテキストを送信する。Rust 側の `storage.rs` が frontmatter YAML と本文を結合してファイルに書き込む。
+### 4.9 パフォーマンス閾値まとめ
 
-### 4.6 EditorView 画面レイアウト
-
-```
-┌─────────────────────────────────────────────┐
-│ ┌─────────────┐ ┌─────────────────────────┐ │
-│ │             │ │ FrontmatterBar          │ │
-│ │  NoteList   │ │  [tag1] [tag2] [+]      │ │
-│ │             │ ├─────────────────────────┤ │
-│ │  ─────────  │ │                         │ │
-│ │  note1.md   │ │  CodeMirror 6 Editor    │ │
-│ │  note2.md   │ │  (Markdown Highlight)   │ │
-│ │  note3.md   │ │                         │ │
-│ │  ...        │ │  --- (frontmatter bg)   │ │
-│ │             │ │  tags: [tag1]           │ │
-│ │             │ │  ---                    │ │
-│ │             │ │                         │ │
-│ │             │ │  本文テキスト...         │ │
-│ │             │ │                         │ │
-│ │             │ │              [📋 Copy]  │ │
-│ └─────────────┘ └─────────────────────────┘ │
-└─────────────────────────────────────────────┘
-```
-
-- `NoteList` は左サイドバーとして固定幅（240px）で配置する。
-- `CopyButton` はエディタ領域の右下に `position: fixed` で浮遊配置する。
-- タイトル入力欄は存在しない。これはリリースブロッキング制約である。
-
-### 4.7 IPC エラーハンドリング
-
-`module:editor` における IPC エラーは以下の方針で処理する。
-
-| IPC コマンド | エラー時の動作 | ユーザーへの通知 |
+| 操作 | 閾値 | 計測方法 |
 |---|---|---|
-| `createNote` | 新規作成を中断、エディタ状態は変更しない | コンソールエラー + エディタ上部に赤帯メッセージ（3秒） |
-| `saveNote` | 3秒後に自動リトライ（最大3回） | 初回失敗時は通知なし、3回失敗後にエディタ上部に赤帯メッセージ |
-| `readNote` | NoteList の選択状態をリセット | エディタ上部に赤帯メッセージ（3秒） |
-| `deleteNote` | 削除を中断、NoteList の状態は変更しない | エディタ上部に赤帯メッセージ（3秒） |
-| `listNotes` | 空リストを表示 | NoteList 内に「読み込み失敗」テキスト |
+| Cmd+N → エディタフォーカス | ≤ 200ms | `performance.now()` でショートカットイベント受信 → `EditorView.focus()` 完了までを計測 |
+| CopyButton クリック → クリップボード書き込み完了 | ≤ 100ms | `performance.now()` でクリックハンドラ開始 → IPC レスポンス受信までを計測 |
+| 自動保存（カード外クリック → save_note 完了） | ≤ 100ms | `performance.now()` で `saveNote()` 呼び出し → IPC レスポンス受信までを計測 |
+| CodeMirror 6 初期化（`new EditorView` → `focus()`） | ≤ 65ms | `performance.now()` で `onMount` 開始 → `focus()` 完了までを計測 |
 
-### 4.8 非機能要件
+## 5. Open Questions (全件解決済み)
 
-| 項目 | 目標値 | 担保方法 |
-|---|---|---|
-| 新規ノート作成（Cmd+N → フォーカス） | 100ms 以下 | Rust 側で空ファイル作成のみ（数 ms）、WebView 側で `EditorView.focus()` 即時実行 |
-| 自動保存デバウンス | 500ms | `EditorView.svelte` 内の `setTimeout` |
-| コピー操作（ボタン押下 → クリップボード完了） | 50ms 以下 | `navigator.clipboard.writeText()` は同期的に近い速度で動作 |
-| CodeMirror 6 初期化 | 200ms 以下 | 拡張セットを最小限に限定（Markdown ハイライト + history + frontmatter プラグインのみ） |
-| エディタメモリ消費 | ドキュメントサイズ + 20MB 以下 | CodeMirror 6 は仮想 DOM 不使用で軽量。長大ドキュメントでもビューポート外はレンダリングしない |
-
----
-
-## 5. Open Questions
-
-| ID | 質問 | 影響コンポーネント | 判断に必要な情報 |
+| ID | 質問 | 影響コンポーネント | 決定 |
 |---|---|---|---|
-| OQ-EC-001 | `CopyButton` のコピー対象は frontmatter を除いた本文のみとしているが、ユーザーが frontmatter 付きでコピーしたい場合の UI を将来的に追加するか | `CopyButton.svelte`、`EditorView.svelte` | ユーザーフィードバック収集後に判断 |
-| OQ-EC-002 | `Cmd+N` / `Ctrl+N` をグリッド画面（`/grid`）や設定画面（`/settings`）からも発火可能とするか。現設計では `EditorView.svelte` がキーバインドを所有するため、`EditorView` がマウントされていない画面では動作しない | `EditorView.svelte`、`App.svelte` | ルーティング実装の確定後に、キーバインド登録先を `App.svelte` に移動するかを判断 |
-| OQ-EC-003 | frontmatter 背景色テーマのダークモード対応をどのタイミングで実装するか。初期リリースではライトテーマ（`#f0f4f8`）のみで十分か | `EditorView.svelte`（CodeMirror テーマ） | OS テーマ検出（`prefers-color-scheme`）の実装スコープ確定後に判断 |
-| OQ-EC-004 | 自動保存の失敗リトライ（最大3回、3秒間隔）の仕様が十分か。ディスクフルやパーミッションエラー等の永続的エラー時にリトライし続けるのは無意味であり、エラー種別に応じた分岐が必要か | `EditorView.svelte`、`ipc.ts`、`storage.rs` | Rust 側のエラー型設計（`error.rs`）の確定後に分岐ロジックを検討 |
-| OQ-EC-005 | NoteList のソート順はファイル名（タイムスタンプ）降順で固定するか、ユーザーによる並び替え機能を追加するか | `NoteList.svelte`、`notesStore` | 要件定義でのスコープ確認 |
+| OQ-EDIT-001 | frontmatter 背景色をユーザーがカスタマイズ可能にするか、固定値とするか | `NoteEditor.svelte` (`frontmatter-decoration.ts`) | **固定値 `rgba(59, 130, 246, 0.08)` とする。** ダークモード未対応の現仕様ではカスタマイズ機能の投資対効果が低い |
+| OQ-EDIT-002 | CopyButton のコピー対象を「frontmatter 除去済み本文」とするか「frontmatter 含む生テキスト」とするか | `CopyButton.svelte`, `frontmatter.ts` | **frontmatter 除去済み本文とする。** PromptNotes の用途（LLM プロンプトの保存・コピー）では frontmatter はメタデータであり、コピー対象に含めるとユーザー体験を損なう |
+| OQ-EDIT-003 | 編集中にブラウザ / アプリがクラッシュした場合の未保存データ復旧機構を設けるか | `NoteEditor.svelte`, `NoteCard.svelte` | **MVP ではクラッシュ復旧機構を実装しない。** 自動保存がカード外クリック時に発火するため、データ損失リスクは限定的。将来的には `localStorage` への定期的なドラフト保存を検討する |
+| OQ-EDIT-004 | DeleteButton に確認ダイアログを表示するか（OQ-ARCH-003 からの引き継ぎ） | `DeleteButton.svelte` | **OQ-ARCH-003 の決定に従う。** `trash` クレートで OS のゴミ箱に移動（確認ダイアログなし）。ゴミ箱移動失敗時のみ確認ダイアログを表示し、ユーザーが完全削除を選択可能 |
+| OQ-EDIT-005 | CodeMirror 6 のキーバインドとして Vim / Emacs モードをサポートするか | `NoteEditor.svelte` | **MVP ではデフォルトキーバインド（`defaultKeymap`）のみをサポートする。** Emacs モードは OS 標準ショートカット（`Ctrl+A` 等）と多数衝突するため、設定 UI での ON/OFF 切り替えが前提。Vim / Emacs モードは `@codemirror/vim` / `@codemirror/legacy-modes` で将来設定 UI と併せて追加する |

@@ -1,0 +1,31 @@
+<mxfile host="Electron" agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/29.6.6 Chrome/146.0.7680.72 Electron/41.0.2 Safari/537.36" version="29.6.6">
+  <diagram name="ページ-1" id="NUG9fxrPk--X_lOIc_kr">
+    <mxGraphModel dx="553" dy="1185" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="DeDv7B8Rxlx5IU952miK-7" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="" vertex="1">
+          <mxGeometry height="390" width="450" x="20" y="50" as="geometry" />
+        </mxCell>
+        <mxCell id="DeDv7B8Rxlx5IU952miK-1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="Return to TopFeed" vertex="1">
+          <mxGeometry height="60" width="120" x="40" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="DeDv7B8Rxlx5IU952miK-2" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;rounded=0;" value="Settings" vertex="1">
+          <mxGeometry height="30" width="240" x="160" y="160" as="geometry" />
+        </mxCell>
+        <mxCell id="DeDv7B8Rxlx5IU952miK-4" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;rounded=0;" value="Notes Directory" vertex="1">
+          <mxGeometry height="30" width="240" x="160" y="200" as="geometry" />
+        </mxCell>
+        <mxCell id="DeDv7B8Rxlx5IU952miK-5" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="" vertex="1">
+          <mxGeometry height="60" width="280" x="160" y="240" as="geometry" />
+        </mxCell>
+        <mxCell id="DeDv7B8Rxlx5IU952miK-6" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="Choose" vertex="1">
+          <mxGeometry height="60" width="120" x="320" y="320" as="geometry" />
+        </mxCell>
+        <mxCell id="DeDv7B8Rxlx5IU952miK-8" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="モーダル" vertex="1">
+          <mxGeometry height="30" width="60" x="20" y="20" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

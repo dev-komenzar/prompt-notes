@@ -53,11 +53,11 @@ wave_config:
       - module:storage
       reason: ファイル名規則 YYYY-MM-DDTHHMMSS.md および自動保存は確定済み。違反時リリース不可。
     - targets:
-      - module:grid
+      - module:feed
       reason: デフォルト直近7日間フィルタ・タグ/日付フィルタ・全文検索は必須機能。未実装ならリリース不可。
     modules:
     - editor
-    - grid
+    - feed
     - storage
     - settings
   - node_id: governance:adr_tech_stack
@@ -106,7 +106,7 @@ wave_config:
       reason: Linux・macOS対応必須。Windowsは将来対応としスコープ外。
     modules:
     - editor
-    - grid
+    - feed
     - storage
     - settings
     - shell
@@ -129,7 +129,7 @@ wave_config:
       reason: 設定変更（保存ディレクトリ）はRustバックエンド経由で永続化。フロントエンド単独でのファイルパス操作は禁止。
     modules:
     - editor
-    - grid
+    - feed
     - storage
     - settings
     - shell
@@ -180,9 +180,9 @@ wave_config:
     modules:
     - storage
     - settings
-  - node_id: detail:grid_search
-    output: docs/detailed_design/grid_search_design.md
-    title: Grid View & Search Detailed Design
+  - node_id: detail:feed_search
+    output: docs/detailed_design/feed_search_design.md
+    title: Feed & Search Detailed Design
     depends_on:
     - id: detail:component_architecture
       relation: depends_on
@@ -192,17 +192,17 @@ wave_config:
       semantic: technical
     conventions:
     - targets:
-      - module:grid
-      reason: Pinterestスタイル可変高カード必須。デフォルトフィルタは直近7日間。
+      - module:feed
+      reason: デフォルトフィルタは直近7日間。ノートは降順フィード表示。
     - targets:
-      - module:grid
+      - module:feed
       reason: タグ・日付フィルタおよび全文検索（ファイル全走査）は必須機能。
     - targets:
-      - module:grid
+      - module:feed
       - module:editor
-      reason: カードクリックでエディタ画面へ遷移必須。
+      reason: カードクリックで編集モードへ遷移必須。
     modules:
-    - grid
+    - feed
     - storage
   '4':
   - node_id: plan:implementation_plan
@@ -218,7 +218,7 @@ wave_config:
     - id: detail:storage_fileformat
       relation: depends_on
       semantic: technical
-    - id: detail:grid_search
+    - id: detail:feed_search
       relation: depends_on
       semantic: technical
     conventions:
@@ -228,13 +228,13 @@ wave_config:
       reason: Linux（バイナリ・Flatpak・NixOS）および macOS（バイナリ・Homebrew Cask）配布必須。Windowsは対象外。
     - targets:
       - module:editor
-      - module:grid
+      - module:feed
       - module:storage
       - module:settings
       reason: 全必須機能の実装・テスト完了までリリース不可。AI呼び出し・クラウド同期・Markdownプレビュー・モバイル対応はスコープ外であり実装禁止。
     modules:
     - editor
-    - grid
+    - feed
     - storage
     - settings
     - shell
