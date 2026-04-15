@@ -348,6 +348,24 @@ pub struct NoteFrontmatter {
 
 **空 frontmatter の高速生成:** `create_note` 時は `serde_yaml` を経由せず、固定文字列 `"---\ntags: []\n---\n"` を直接出力する。200ms 以内のノート作成目標を達成するためのファストパスである。
 
+**body 意味論（ADR-008 準拠）:** frontmatter と body の境界は以下のとおり厳密に定義される。
+
+- **ファイル上のレイアウト**: `---\n<yaml>\n---\n\n<body>`。frontmatter ブロック（開き/閉じ `---\n`）と body の間に空行 1 行が必ず挿入される。
+- **body の範囲**: 閉じフェンス `\n---\n` の直後に現れる区切り `\n` は frontmatter 側の責務として扱い、body には含めない。したがって例えば `---\ntags: []\n---\n\nHello` をパースした場合、`body = "Hello"` となる（先頭の `\n` は含まれない）。
+- **`parse` の実装**: `\n---\n` を閉じフェンスとして検出した後、さらにその直後の位置に `\n` があればこれもスキップして body の開始位置とする。具体的には `body_start = 4 + pos + 5 + (1 if content[4 + pos + 5] == '\n' else 0)` のようにガードする。
+- **`reassemble` の実装**: `format!("{}\n{}", frontmatter_with_trailing_newline, body)` の形で frontmatter（末尾 `\n` 付き）の後に区切り `\n` を 1 つ追加して body を連結する。body が空文字列の場合、出力は `---\n<yaml>\n---\n\n` となり、末尾に空行 1 つが残る。
+- **往復冪等性（round-trip idempotency）**: 任意のファイル内容 `C` について `parse(C) → reassemble(tags, body) → parse(...)` の繰り返しで body が変化しないこと。この不変条件は `#[cfg(test)] mod tests` の単体テストとして表明する。検証シナリオ例:
+  ```rust
+  let c0 = "---\ntags: []\n---\n\nHello";
+  let p0 = parse(c0);
+  let c1 = reassemble(&p0.tags, &p0.body);
+  let p1 = parse(&c1);
+  assert_eq!(p0.body, p1.body); // "Hello" == "Hello"
+  assert_eq!(c0, c1);            // 冪等
+  ```
+
+この仕様は ADR-008 で確定した body 意味論の単一信頼源である。フロントエンド側の表示用軽量パース (`src/lib/frontmatter.ts`) も同一の body 意味論に従う（`docs/detailed_design/editor_clipboard_design.md` §3.3 参照）。
+
 ### 4.4 自動保存トリガーの実装
 
 自動保存はユーザーの明示的保存操作なしに以下のイベントで発火する。

@@ -20,6 +20,10 @@ codd:
   - targets:
     - module:storage
     reason: ローカル .md ファイル保存は確定済み。DB・クラウド保存は禁止。
+  - targets:
+    - module:storage
+    - module:editor
+    reason: ノート本文（body）は frontmatter 閉じフェンス `---\n` とその直後の区切り `\n` を含まない。parse→reassemble の往復は冪等であること（ADR-008）。
   modules:
   - editor
   - storage
@@ -39,6 +43,7 @@ codd:
 | framework:tauri | フレームワーク | Tauri（Rust + WebView）は確定済み。Electron 等への変更はリリース不可。 | Decision Log ADR-001 |
 | module:editor | エディタエンジン | CodeMirror 6 は確定済み。Monaco 等への変更はリリース不可。 | Decision Log ADR-002 |
 | module:storage | データ保存方式 | ローカル `.md` ファイル保存は確定済み。DB・クラウド保存は禁止。 | Decision Log ADR-003 |
+| module:storage / module:editor | body 意味論と往復冪等性 | body は frontmatter 閉じフェンスおよびその直後の区切り `\n` を含まない。parse→reassemble は冪等であること。 | Decision Log ADR-008 |
 
 これらの制約に違反する変更提案はすべてリリースブロッカーとして却下される。
 
@@ -157,6 +162,32 @@ codd:
   - `svelte.config.js` は `vitePreprocess()` のみを使用し、SvelteKit アダプタを設定しない。
   - `vite.config.ts` は `@sveltejs/vite-plugin-svelte` の `svelte()` プラグインを使用し、`sveltekit()` プラグインは使用しない。
   - `src/routes/` ディレクトリは設置しない（SvelteKit 規約との混同を避けるため）。
+
+### ADR-008: ノートファイル本文（body）の意味論と往復冪等性
+
+- **ステータス**: 確定（変更不可・リリース不可制約）
+- **決定日**: 2026-04-15
+- **コンテキスト**: ADR-004 で確定した `.md` ファイル構造（YAML frontmatter + 本文）における、frontmatter と body の境界定義を ADR レベルで明文化していなかった。結果として Rust (`src-tauri/src/storage/frontmatter.rs`) と TypeScript (`src/lib/frontmatter.ts`, `tests/unit/frontmatter.ts`) の 3 つの実装で body の解釈が非対称となり、カードを開閉するたびに本文先頭に `\n` が累積するバグが発生した（保存側の `reassemble` が `\n` を追加する一方、パース側は閉じフェンス直後の `\n` を body に含める状態）。本 ADR は body 意味論を単一の仕様として固定し、実装間の非対称性を再発させないためのリリースブロッキング制約として定める。
+- **決定**:
+  1. **body の定義**: ファイル内容のうち、frontmatter ブロック（開きフェンス `---\n` から閉じフェンス `---\n` まで）と、閉じフェンス直後の **区切り `\n` 1 つ** を除いた残り全体を body とする。
+  2. **ファイル上のレイアウト**: ファイル全体は次の形式で正規化される — `---\n<yaml>\n---\n\n<body>`。frontmatter ブロックと body の間に空行 1 行が必ず入る。この空行は frontmatter 側の責務であり、body には含まれない。
+  3. **冪等性**: 任意のファイル内容 `C` について、`parse(C)` で得られる `(tags, body)` を `reassemble(tags, body)` に適用した結果 `C'` は、往復前後で本文先頭に改行が追加されない（`parse(C').body == parse(C).body` が成立する）。これを **往復冪等性（round-trip idempotency）** と呼び、Rust および TypeScript 両実装の不変条件とする。
+- **根拠**:
+  - body の意味論を「区切り `\n` を含まない」方針に統一することで、コピー・プレビュー・検索など body を消費する下流処理で追加の `trim` やガードが不要になる
+  - 空行 1 行は frontmatter 側の正規化責務として固定することで、シリアライズ時の改行数を単一の実装で決定できる
+  - 冪等性を不変条件として宣言することで、今後の新規実装（例: 別言語バインディング、プラグインエコシステム）でも同一検証ハーネス（round-trip test）で適合性を確認できる
+- **実装上の要件**:
+  - **Rust** (`src-tauri/src/storage/frontmatter.rs`): `parse` は閉じフェンス `\n---\n` の直後にさらに `\n` が存在する場合、それを body に含めない。`reassemble` は `format!("{}\n{}", fm, body)` のように frontmatter（末尾 `\n` 付き）の後に区切り `\n` を 1 つ追加して body を連結する。
+  - **TypeScript スタブ** (`tests/unit/frontmatter.ts`): `splitRaw` は閉じフェンス後の空行（`\n`）を body に含めない。`serializeFrontmatter` は frontmatter と body の間に空行 1 行を挿入する。
+  - **TypeScript 本番** (`src/lib/frontmatter.ts`): `extractBody` は現状の `trimStart()` 相当の挙動を維持（閉じフェンス直後の空行を除去）し、`generateNoteContent` は frontmatter と body の間に空行 1 行を挿入する。
+  - body が空文字列である場合の正規化結果は `---\n<yaml>\n---\n\n` とする（末尾に空行 1 つを残す）。
+- **検証**:
+  - **Rust ユニットテスト**: `parse → reassemble → parse` の往復で `(tags, body)` が一致することを表明するテストを `frontmatter.rs` 末尾の `#[cfg(test)] mod tests` に追加する。
+  - **TypeScript ユニットテスト**: `parseFrontmatter → serializeFrontmatter → parseFrontmatter` の往復冪等性を `tests/unit/frontmatter.test.ts` に追加する。本番 `src/lib/frontmatter.ts` 側は `generateNoteContent → extractBody → generateNoteContent` の擬似往復冪等性を検証する。
+  - **受入基準**: `docs/test/acceptance_criteria.md` の AC-STOR-06（本文往復冪等性）に対応。
+- **却下した選択肢**:
+  - **body に区切り `\n` を含める方針** — 下流処理で `trimStart()` が必要になり、かつ実装によって `trim` する場所が分散する（本番 TS の `extractBody` のみで吸収するなど）ため、意味論の単一源泉化という本 ADR の目的を達成できない。
+  - **空行 1 行を廃止し `---\n<body>` レイアウトに変更する方針** — Obsidian/VS Code など他ツールで開いたときの視認性が低下し、ADR-004 の相互運用性根拠に反する。また既存ファイルのマイグレーションが発生するため、リリース不可制約違反となる。
 
 ## 3. Follow-ups
 

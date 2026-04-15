@@ -46,7 +46,7 @@ codd:
 |---|---|---|---|
 | Convention 1 | `module:editor` | Cmd+N / Ctrl+N 即時新規ノート作成および1クリックコピーボタンはコアUX。未実装ならリリース不可。 | AC-EDIT-01, AC-EDIT-02, AC-EDIT-06 |
 | Convention 2 | `module:editor` | CodeMirror 6 必須。タイトル入力欄禁止・Markdownプレビュー（レンダリング）禁止。実装した場合リリース不可。 | AC-EDIT-03, FC-SCOPE-01, FC-SCOPE-02 |
-| Convention 3 | `module:storage` | ファイル名規則 `YYYY-MM-DDTHHMMSS.md` および自動保存は確定済み。違反時リリース不可。 | AC-STOR-01, AC-STOR-02, AC-STOR-03 |
+| Convention 3 | `module:storage` | ファイル名規則 `YYYY-MM-DDTHHMMSS.md` および自動保存は確定済み。違反時リリース不可。 | AC-STOR-01, AC-STOR-02, AC-STOR-03, AC-STOR-06 |
 | Convention 4 | `module:feed` | デフォルト直近7日間フィルタ・タグ/日付フィルタ・全文検索は必須機能。未実装ならリリース不可。 | AC-FEED-01, AC-FEED-02, AC-FEED-03, AC-FEED-04 |
 
 ### 設計−テスト追跡表
@@ -72,6 +72,7 @@ codd:
 | VB-15 | frontmatter に YAML 形式で tags のみ保存 | データ設計 > ファイル構造 | AC-STOR-03 |
 | VB-16 | デフォルト保存ディレクトリが OS 別に正しい | データ設計 > デフォルト保存ディレクトリ | AC-STOR-04 |
 | VB-17 | 設定から保存ディレクトリ変更可能 | 設定モーダル | AC-STOR-05 |
+| VB-17b | 保存→再読込で本文先頭が変化しない（往復冪等性） | ADR-008 / データ設計 > ファイル構造 | AC-STOR-06 |
 | VB-18 | デフォルトフィルタが直近7日間 | 機能要件 > フィード表示 | AC-FEED-01 |
 | VB-19 | 新しいノートが上に来る降順表示 | 機能要件 > フィード表示 | AC-FEED-02 |
 | VB-20 | タグフィルタ | 機能要件 > ヘッダー | AC-FEED-03 |
@@ -240,6 +241,15 @@ codd:
   1. 以降の新規ノートが新しいディレクトリに作成される
   2. 新しいディレクトリ内の既存 `.md` ファイルがフィードに表示される
 
+#### AC-STOR-06: 本文往復冪等性（save / reopen で本文先頭が変化しない）[リリースブロッキング]
+
+- **前提**: 任意の本文（例: `Hello` や先頭に日本語・空白・改行を含むテキスト）を持つノートが編集モードで開かれている
+- **操作**: 編集内容を変更せずに編集モードを終了（カード外クリック等）して保存し、その後再度カードを開いて編集モードに遷移する
+- **期待結果**:
+  1. 再度開いた編集モードの本文が、保存前の本文と完全に一致する（先頭に改行 `\n` が追加されない）
+  2. 上記の保存→再読込を任意の回数繰り返しても、本文先頭に改行が累積しない
+- **制約**: ADR-008 で定めた body 意味論（body は frontmatter 閉じフェンスおよびその直後の区切り `\n` を含まない）に準拠し、Rust `storage/frontmatter.rs` および TypeScript `src/lib/frontmatter.ts` / `tests/unit/frontmatter.ts` の両側で `parse → serialize → parse` の往復冪等性が成立すること。
+
 ### module:feed — フィード表示・検索・フィルタ機能
 
 #### AC-FEED-01: デフォルト直近7日間フィルタ [リリースブロッキング]
@@ -398,7 +408,7 @@ Tauri アプリのため、Playwright の Electron 統合モード (`_electron`)
 | ドメイン | 責務 | 対応受入基準 |
 |---|---|---|
 | `editor` | ノート作成・編集・表示モード遷移・CodeMirror 6 | AC-EDIT-01〜12, FC-EDIT-01, FC-EDIT-02, FC-EDITOR-01 |
-| `storage` | ファイル名規則・自動保存・frontmatter・ディレクトリ | AC-STOR-01〜05, FC-STOR-01, FC-STOR-02 |
+| `storage` | ファイル名規則・自動保存・frontmatter・ディレクトリ・本文往復冪等性 | AC-STOR-01〜06, FC-STOR-01, FC-STOR-02 |
 | `feed` | フィード表示・フィルタ・検索・ソート | AC-FEED-01〜05, FC-FEED-01, FC-FEED-02 |
 | `scope-guard` | スコープ外機能が存在しないことの検証 | FC-SCOPE-01, FC-SCOPE-02, FC-SCOPE-03 |
 | `settings` | 設定モーダル・ディレクトリ変更 | AC-UI-01, AC-STOR-05 |
