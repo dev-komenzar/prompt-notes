@@ -38,12 +38,54 @@ describe('splitRaw', () => {
     expect(result.body).toBe('Body text');
   });
 
-  it('handles frontmatter with trailing newline after closing fence', () => {
+  it('ADR-008: excludes separator newline after closing fence', () => {
     const content = '---\ntags: []\n---\n\nBody';
     const result = splitRaw(content);
     expect(result.yaml).toBe('tags: []');
-    expect(result.body).toBe('\nBody');
+    expect(
+      result.body,
+      'ADR-008: body must not include the separator newline after the closing fence'
+    ).toBe('Body');
   });
+});
+
+describe('ADR-008 round-trip idempotency', () => {
+  const cases: Array<{ name: string; body: string }> = [
+    { name: 'simple body', body: 'Hello' },
+    { name: 'empty body', body: '' },
+    {
+      name: 'multiline + japanese + trailing whitespace',
+      body: 'こんにちは\n\n世界  \n末尾',
+    },
+  ];
+
+  for (const { name, body } of cases) {
+    it(`splitRaw → serializeFrontmatter → splitRaw is idempotent (${name})`, () => {
+      const initial = `---\ntags: []\n---\n\n${body}`;
+
+      // 1) splitRaw on the canonical ADR-008 layout must yield the original body
+      const split1 = splitRaw(initial);
+      expect(
+        split1.body,
+        'ADR-008: splitRaw must not include the separator newline in the body'
+      ).toBe(body);
+
+      // 2) parseFrontmatter → serializeFrontmatter must reconstruct the initial content
+      const { frontmatter } = parseFrontmatter(initial);
+      const reserialized = serializeFrontmatter(frontmatter, split1.body);
+      expect(
+        reserialized,
+        'ADR-008: serializeFrontmatter should produce `---\\n<yaml>\\n---\\n\\n<body>` layout'
+      ).toBe(initial);
+
+      // 3) A second splitRaw must recover the original body (idempotency)
+      const split2 = splitRaw(reserialized);
+      expect(
+        split2.body,
+        'ADR-008: round-trip splitRaw must recover the original body'
+      ).toBe(body);
+    });
+  }
 });
 
 describe('parseFrontmatter', () => {
