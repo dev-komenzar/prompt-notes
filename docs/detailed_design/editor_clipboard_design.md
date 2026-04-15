@@ -51,7 +51,7 @@ codd:
 |---|---|---|
 | 1 | CodeMirror 6 必須。Markdown シンタックスハイライトのみ（レンダリング禁止）。frontmatter 領域は背景色で視覚的に区別必須。 | §2 の状態図および §4 で `NoteEditor.svelte` の拡張構成を規定し、`@codemirror/lang-markdown` によるハイライトのみを許可。`ViewPlugin` + `Decoration` による frontmatter 背景色装飾を必須実装として定義する。Markdown の HTML レンダリング / プレビューモードは一切実装しない。 |
 | 2 | タイトル入力欄は禁止。本文のみのエディタ画面であること。 | §4 で `NoteEditor.svelte` の DOM 構造を規定し、`<input>` / `<textarea>` 等のタイトル専用フィールドを持たないことを明記する。エディタ領域は CodeMirror 6 の `.cm-editor` 単体で構成する。 |
-| 3 | 1 クリックコピーボタンによる本文全体のクリップボードコピーはアプリの核心 UX。未実装ならリリース不可。 | §2 のシーケンス図および §4 で `CopyButton.svelte` → `tauri-commands.ts` → `commands/clipboard.rs` → Tauri `clipboard-manager` プラグインの一貫した IPC フローを定義する。Web Clipboard API (`navigator.clipboard`) の使用は禁止し、Rust バックエンド経由を強制する。 |
+| 3 | 1 クリックコピーボタンによる本文全体のクリップボードコピーはアプリの核心 UX。表示モード・編集モードの両方で常時利用可能であること。未実装ならリリース不可。 | §2 のシーケンス図および §4 で `CopyButton.svelte` → `tauri-commands.ts` → `commands/clipboard.rs` → Tauri `clipboard-manager` プラグインの一貫した IPC フローを定義する。`CopyButton` は ViewMode / EditMode の双方で描画し、モード遷移でアンマウントされないことを §4 の DOM 構造で規定する。Web Clipboard API (`navigator.clipboard`) の使用は禁止し、Rust バックエンド経由を強制する。 |
 | 4 | Cmd+N / Ctrl+N で即座に新規ノート作成しフォーカス移動必須。 | §2 のシーケンス図で `module:shell` の `GlobalShortcut` → `Header.svelte` → IPC `create_note` → `NoteCard` 編集モード → CodeMirror 6 フォーカスまでの全経路を定義する。200ms 以内の完了を §4 のパフォーマンス制約として規定する。 |
 
 ## 2. Mermaid Diagrams
@@ -71,6 +71,7 @@ stateDiagram-v2
         [*] --> EditorMounted
         EditorMounted --> Editing: CodeMirror 6 フォーカス取得
         Editing --> Editing: ユーザー入力
+        Editing --> Editing: CopyButton 押下<br/>(モード遷移なし・編集継続)
     }
 
     ViewMode --> EditMode: カードクリック
@@ -87,8 +88,11 @@ stateDiagram-v2
     end note
 
     note right of ViewMode
-        CopyButton は ViewMode でのみ表示。
+        CopyButton は ViewMode / EditMode の
+        両方で常時表示される。
         本文全体をクリップボードにコピー。
+        編集モードではコピー先テキストとして
+        CodeMirror 6 の現在の Doc 内容を用いる。
     end note
 ```
 
@@ -98,7 +102,7 @@ stateDiagram-v2
 
 同時に編集モードになれる `NoteCard` は最大 1 つであり、この不変条件は `Feed.svelte` が `editingNoteId: string | null` を管理することで強制する。あるカードが編集モードに遷移するとき、`Feed.svelte` は既存の編集中カードに対して自動保存 → ViewMode 遷移を指示してから、新しいカードの EditMode 遷移を許可する。
 
-`CopyButton` は ViewMode 時にのみ表示される。編集中のコピー操作は CodeMirror 6 のネイティブ選択コピー（OS 標準の Cmd+C / Ctrl+C）に委ね、「本文全体のコピー」は ViewMode での 1 クリック操作として提供する。
+`CopyButton` は **ViewMode / EditMode のどちらでも常時表示される**。`NoteCard.svelte` は `{#if editing}` / `{:else}` 分岐の外側（モード共通領域）に `CopyButton` を配置し、モード遷移によってアンマウントされないことを保証する。編集モードでは CodeMirror 6 の選択範囲コピー（OS 標準の Cmd+C / Ctrl+C）と 1 クリックコピーが併存するが、両者は役割が異なる（部分選択 vs 本文全体）ため競合しない。編集モード時のコピー対象テキストは CodeMirror 6 の現在の `EditorView.state.doc` 内容（frontmatter 除去後）とし、表示モード時は `read_note` で取得した保存済みファイル内容（frontmatter 除去後）とする。
 
 ### 2.2 クリップボードコピー シーケンス図
 
@@ -107,12 +111,24 @@ sequenceDiagram
     actor User
     participant CB as CopyButton.svelte
     participant NC as NoteCard.svelte
+    participant Ed as NoteEditor.svelte<br/>(EditMode のみ)
     participant TC as tauri-commands.ts
     participant CmdClip as commands/clipboard.rs
     participant ClipPlugin as Tauri clipboard-manager
 
     User->>CB: コピーボタン 1 クリック
     CB->>NC: getBodyContent()
+
+    alt EditMode (EditorView マウント中)
+        NC->>Ed: getContent()
+        Ed-->>NC: rawMarkdown (Doc.toString())
+        NC->>NC: extractBody(rawMarkdown)
+    else ViewMode (EditorView 未マウント)
+        NC->>TC: readNote(filename)
+        TC-->>NC: { content }
+        NC->>NC: extractBody(content)
+    end
+
     NC-->>CB: bodyText (frontmatter 除去済み本文)
     CB->>TC: copyToClipboard(bodyText)
     TC->>CmdClip: invoke("copy_to_clipboard", { text: bodyText })
@@ -123,6 +139,7 @@ sequenceDiagram
     CB->>CB: アイコン変更 "✓"<br/>2 秒後に元のコピーアイコンに復帰
 
     Note over CB: Web Clipboard API<br/>(navigator.clipboard) は使用禁止。<br/>Rust IPC 経由を強制。
+    Note over NC: EditMode では未保存の編集内容を<br/>コピーする（保存をブロックしない）。<br/>ViewMode では保存済みファイル内容を<br/>コピーする。
 ```
 
 **所有権と実装境界の説明:**
@@ -130,6 +147,13 @@ sequenceDiagram
 クリップボードコピーの IPC フローは `CopyButton.svelte` → `tauri-commands.ts` → `commands/clipboard.rs` → Tauri `clipboard-manager` プラグインの 4 段階で構成される。フロントエンドが `navigator.clipboard` API を直接呼び出すことは禁止であり、この制約は ESLint ルール `no-restricted-globals` で `navigator.clipboard` を禁止することで構造的に強制する。
 
 `CopyButton.svelte` がコピー対象とするのは **frontmatter を除去した本文テキスト** である。frontmatter の除去は `frontmatter.ts` の `extractBody(rawMarkdown): string` 関数で実行する。この関数は先頭の `---` 〜 `---` ブロックを除去し、残りのテキストを返却する読み取り専用操作であり、書き込み正規化は行わない。
+
+ソース Markdown の取得元はモードによって異なる。`NoteCard.svelte` が `getBodyContent()` の内部で以下のように分岐する。
+
+- **EditMode**: `NoteEditor.getContent()`（`EditorView.state.doc.toString()`）を呼び出し、未保存の最新 Doc 内容を取得する。このパスは `read_note` IPC を経由しないため、コピー操作は自動保存を誘発せず編集状態も維持する。
+- **ViewMode**: `read_note` IPC で保存済みファイル内容を読み取る。EditorView は存在しないため、ファイルが単一信頼源となる。
+
+両経路とも、最終的に `extractBody()` を通してから `copyToClipboard()` に渡す。
 
 `commands/clipboard.rs` は `module:shell` の所有であり、`module:editor` はこのコマンドの利用者である。`CopyButton.svelte` は `tauri-commands.ts` の `copyToClipboard(text: string): Promise<void>` 関数のみをインポートし、Rust 側の実装詳細を知らない。
 
@@ -189,15 +213,18 @@ graph TB
         NC_STATE["state: 'view' | 'edit'"]
         NC_META["props: NoteMetadata"]
 
-        subgraph "ViewMode 時に表示"
-            BODY_PREVIEW["本文プレビュー<br/>(frontmatter 除去済み)"]
-            TAG_DISPLAY["タグ表示<br/>(frontmatter.ts で抽出)"]
-            TIMESTAMP["タイムスタンプ表示<br/>(timestamp.ts で変換)"]
+        subgraph "両モード共通で常時表示"
             COPY_BTN["CopyButton.svelte"]
             DEL_BTN["DeleteButton.svelte"]
         end
 
-        subgraph "EditMode 時に表示"
+        subgraph "ViewMode 時のみ表示"
+            BODY_PREVIEW["本文プレビュー<br/>(frontmatter 除去済み)"]
+            TAG_DISPLAY["タグ表示<br/>(frontmatter.ts で抽出)"]
+            TIMESTAMP["タイムスタンプ表示<br/>(timestamp.ts で変換)"]
+        end
+
+        subgraph "EditMode 時のみ表示"
             EDITOR["NoteEditor.svelte<br/>(CodeMirror 6)"]
         end
     end
@@ -219,8 +246,8 @@ graph TB
     NC_STATE -->|"'view'"| BODY_PREVIEW
     NC_STATE -->|"'view'"| TAG_DISPLAY
     NC_STATE -->|"'view'"| TIMESTAMP
-    NC_STATE -->|"'view'"| COPY_BTN
-    NC_STATE -->|"'view'"| DEL_BTN
+    NC_STATE -->|"'view' または 'edit'"| COPY_BTN
+    NC_STATE -->|"'view' または 'edit'"| DEL_BTN
     NC_STATE -->|"'edit'"| EDITOR
 
     COPY_BTN -->|"tauri-commands.ts"| IPC_CLIP["commands/clipboard.rs"]
@@ -389,8 +416,10 @@ const frontmatterDecoration = () => ViewPlugin.fromClass(
 
 | 項目 | 仕様 |
 |---|---|
-| 表示条件 | `NoteCard` が ViewMode のときのみ表示 |
-| コピー対象 | frontmatter を除去した本文全体（`frontmatter.ts` の `extractBody()` で生成） |
+| 表示条件 | **ViewMode / EditMode の両方で常時表示**。`NoteCard.svelte` は `{#if editing}` / `{:else}` 分岐の外側（モード共通領域）に `CopyButton` を配置し、モード遷移で再マウントしない |
+| コピー対象 | frontmatter を除去した本文全体（`frontmatter.ts` の `extractBody()` で生成）。ソース取得元は EditMode では `NoteEditor.getContent()`（未保存 Doc）、ViewMode では `readNote()`（保存済みファイル） |
+| 編集への副作用 | EditMode でのコピー操作は自動保存を誘発せず、EditorView のフォーカス・選択状態・Undo 履歴を変更しない |
+| レイアウト | EditMode では CodeMirror 6 の入力領域と重ならない位置（例: カード右上固定、またはモード共通フッタ）に配置する |
 | IPC 経路 | `tauri-commands.ts` の `copyToClipboard(text)` → `commands/clipboard.rs` の `copy_to_clipboard` → Tauri `clipboard-manager` プラグイン |
 | 視覚フィードバック | コピー成功時: アイコンを「✓」に変更し、`text-green-500` クラスを適用。2,000ms 後にデフォルトのコピーアイコンに復帰 |
 | エラー時 | コピー失敗時: アイコンを「✕」に変更し、`text-red-500` クラスを適用。3,000ms 後にデフォルトに復帰。コンソールにエラーをログ出力 |

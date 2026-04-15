@@ -322,7 +322,7 @@ sequenceDiagram
 | `src/lib/stores/config.ts` | `module:settings` | 設定状態のキャッシュ |
 | `src/lib/components/NoteCard.svelte` | `module:editor` | ノートカードの表示/編集モード制御 |
 | `src/lib/components/NoteEditor.svelte` | `module:editor` | CodeMirror 6 インスタンスのライフサイクル管理 |
-| `src/lib/components/CopyButton.svelte` | `module:editor` | コピー操作 UI とフィードバック |
+| `src/lib/components/CopyButton.svelte` | `module:editor` | コピー操作 UI とフィードバック。**表示モード・編集モードの両方で常時マウントされ、モード遷移で再マウントしない**（詳細は `detail:editor_clipboard` §2.1 / §4.4 を参照） |
 | `src/lib/components/DeleteButton.svelte` | `module:editor` | 削除操作 UI |
 | `src/lib/components/Feed.svelte` | `module:feed` | ノートカード一覧のレンダリング（降順ソート） |
 | `src/lib/components/SearchBar.svelte` | `module:feed` | 検索入力 UI |
