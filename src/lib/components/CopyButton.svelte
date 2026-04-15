@@ -1,48 +1,50 @@
 <script lang="ts">
-  import { copyToClipboard } from '../utils/clipboard';
-  import { extractBody } from '../utils/frontmatter';
+  import { readNote, copyToClipboard } from "$lib/utils/tauri-commands";
+  import { extractBody } from "$lib/utils/frontmatter";
 
-  interface Props {
-    getRawContent: () => string;
-  }
+  export let filename: string;
 
-  let { getRawContent }: Props = $props();
-  let copied = $state(false);
+  let state: "idle" | "success" | "error" = "idle";
+  let copying = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
 
   async function handleCopy() {
-    const raw = getRawContent();
-    const body = extractBody(raw);
-    const ok = await copyToClipboard(body);
-    if (ok) {
-      copied = true;
-      setTimeout(() => (copied = false), 1500);
+    if (copying) return;
+    copying = true;
+    try {
+      const result = await readNote(filename);
+      const body = extractBody(result.content);
+      await copyToClipboard(body);
+      state = "success";
+      timer = setTimeout(() => { state = "idle"; copying = false; }, 2000);
+    } catch (e) {
+      console.error("Copy failed:", e);
+      state = "error";
+      timer = setTimeout(() => { state = "idle"; copying = false; }, 3000);
     }
   }
 </script>
 
 <button
-  class="copy-button"
-  data-testid="copy-button"
-  aria-label="本文をコピー"
-  onclick={handleCopy}
-  title="本文をコピー"
-  type="button"
+  class="copy-btn"
+  class:success={state === "success"}
+  class:error={state === "error"}
+  on:click={handleCopy}
+  disabled={copying}
+  aria-label="Copy note body"
 >
-  {copied ? '✓ コピー済み' : '📋 コピー'}
+  {#if state === "success"}✓{:else if state === "error"}✕{:else}📋{/if}
 </button>
 
 <style>
-  .copy-button {
-    padding: 6px 14px;
-    border-radius: var(--radius-sm);
-    font-size: 13px;
-    color: var(--color-primary);
-    background: rgba(137, 180, 250, 0.1);
-    transition: all var(--transition-fast);
-    white-space: nowrap;
+  .copy-btn {
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 14px;
+    transition: all 0.15s;
   }
-
-  .copy-button:hover {
-    background: rgba(137, 180, 250, 0.2);
-  }
+  .copy-btn:hover:not(:disabled) { background: var(--surface-hover); }
+  .copy-btn:disabled { opacity: 0.5; }
+  .success { color: var(--success); }
+  .error { color: var(--danger); }
 </style>

@@ -1,73 +1,20 @@
-/**
- * Generate YAML frontmatter string from tags array.
- */
-export function generateFrontmatter(tags: string[]): string {
-  if (tags.length === 0) {
-    return '---\ntags: []\n---\n';
-  }
-  const tagList = tags.map((t) => `  - ${t}`).join('\n');
-  return `---\ntags:\n${tagList}\n---\n`;
+const FRONTMATTER_RE = /^---\n[\s\S]*?\n---\n/;
+
+export function extractBody(rawMarkdown: string): string {
+  return rawMarkdown.replace(FRONTMATTER_RE, "");
 }
 
-/**
- * Parse tags from raw note content.
- */
-export function parseTags(raw: string): string[] {
-  const match = raw.match(/^---\n([\s\S]*?)\n---/);
+export function extractTags(rawMarkdown: string): string[] {
+  const match = rawMarkdown.match(/^---\n([\s\S]*?)\n---\n/);
   if (!match) return [];
-
-  const yamlBlock = match[1];
-  const tags: string[] = [];
-
-  const lines = yamlBlock.split('\n');
-  let inTags = false;
-
-  for (const line of lines) {
-    if (line.startsWith('tags:')) {
-      // Inline array: tags: [a, b, c]
-      const inline = line.match(/tags:\s*\[([^\]]*)\]/);
-      if (inline) {
-        return inline[1]
-          .split(',')
-          .map((t) => t.trim())
-          .filter((t) => t.length > 0);
-      }
-      inTags = true;
-      continue;
-    }
-    if (inTags) {
-      const itemMatch = line.match(/^\s+-\s+(.+)/);
-      if (itemMatch) {
-        tags.push(itemMatch[1].trim());
-      } else {
-        break;
-      }
-    }
+  const fm = match[1];
+  const inline = fm.match(/^tags:\s*\[([^\]]*)\]/m);
+  if (inline) {
+    return inline[1].split(",").map(t => t.trim()).filter(Boolean);
   }
-
-  return tags;
-}
-
-/**
- * Extract body text from raw content (excluding frontmatter).
- */
-export function extractBody(raw: string): string {
-  const match = raw.match(/^---\n[\s\S]*?\n---\n?/);
-  if (!match) return raw;
-  return raw.slice(match[0].length);
-}
-
-/**
- * Detect frontmatter range { from, to } in line numbers (0-based).
- */
-export function detectFrontmatterRange(doc: string): { from: number; to: number } | null {
-  const lines = doc.split('\n');
-  if (lines[0] !== '---') return null;
-
-  for (let i = 1; i < lines.length; i++) {
-    if (lines[i] === '---') {
-      return { from: 0, to: i };
-    }
+  const block = fm.match(/^tags:\s*\n((?:\s+-[^\n]*\n?)*)/m);
+  if (block) {
+    return block[1].split("\n").map(l => l.replace(/^\s*-\s*/, "").trim()).filter(Boolean);
   }
-  return null;
+  return [];
 }

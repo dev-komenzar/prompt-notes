@@ -1,0 +1,16 @@
+{
+  "rules": {
+    "no-restricted-imports": ["error", {
+      "paths": [
+        {
+          "name": "@tauri-apps/plugin-fs",
+          "message": "Direct filesystem access from frontend is prohibited. Use tauri-commands.ts IPC wrappers."
+        },
+        {
+          "name": "@tauri-apps/plugin-clipboard-manager",
+          "message": "Direct clipboard access is prohibited. Use tauri-commands.ts copyToClipboard()."
+        }
+      ]
+    }]
+  }
+}

@@ -80,7 +80,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 | レイヤー | 技術 | バージョン基準 |
 |---|---|---|
 | シェル | Tauri v2 | 最新安定版 |
-| フロントエンド | Svelte + TypeScript | Svelte 4.x / TypeScript 5.x |
+| フロントエンド | Svelte + TypeScript | Svelte 5.x / TypeScript 5.x / Vite 6.x |
 | エディタ | CodeMirror 6 | `@codemirror/view` 6.x |
 | バックエンド | Rust | Edition 2021 |
 | frontmatter パース | `serde_yaml` | 最新安定版 |
@@ -121,7 +121,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 | 1-11 | `timestamp.ts` | `src/lib/utils/timestamp.ts` | `filenameToDate(filename: string): Date` — ファイル名 `YYYY-MM-DDTHHMMSS.md` をパースして `Date` オブジェクトに変換。`dateToFilenamePrefix(date: Date): string` — 日付を `YYYY-MM-DDTHHMMSS` 形式に変換（IPC パラメータ用） |
 | 1-12 | ESLint 設定 | `.eslintrc.json` | `no-restricted-imports`: `@tauri-apps/plugin-fs`（直接ファイルシステムアクセス禁止）、`@tauri-apps/plugin-clipboard-manager`（直接クリップボードアクセス禁止）。`no-restricted-globals`: `navigator.clipboard`（Web Clipboard API 禁止） |
 | 1-13 | グローバルショートカット登録 | `src-tauri/src/main.rs` | `tauri-plugin-global-shortcut` で `CmdOrCtrl+N` を登録し、`new-note` イベントを WebView に emit |
-| 1-14 | Svelte プロジェクト初期化 | `src/`, `svelte.config.js`, `vite.config.ts` | Svelte 4.x + TypeScript 5.x。ルートコンポーネント `App.svelte` のスケルトン |
+| 1-14 | Svelte プロジェクト初期化 | `src/`, `svelte.config.js`, `vite.config.ts` | Svelte 5.x + TypeScript 5.x。ルートコンポーネント `App.svelte` のスケルトン |
 
 **検証基準:**
 

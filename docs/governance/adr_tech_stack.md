@@ -135,6 +135,29 @@ codd:
 
 - **根拠**: Tauri は各プラットフォーム向けのネイティブインストーラ生成をサポートしており、Flatpak および Homebrew Cask との統合が容易である。
 
+### ADR-007: メタフレームワーク — SvelteKit を採用しない
+
+- **ステータス**: 確定
+- **決定日**: 2026-04-15
+- **コンテキスト**: ADR-002 で Svelte を採用した際、メタフレームワーク SvelteKit の採否を明文化していなかった。現状の実装はプレーン Svelte + Vite（`@sveltejs/vite-plugin-svelte`）で構成されているが、`src/routes/` 配下に SvelteKit 規約ファイル（`+page.svelte` 等）がスキャフォールディング残骸として残存し、依存関係（`@sveltejs/kit`, `@sveltejs/adapter-static`）も未使用のまま混入する状態が発生していた。将来複数ページ構成への拡張可能性を見据え、採否と理由を明確化する。
+- **決定**: SvelteKit を採用せず、プレーン Svelte + Vite 構成を維持する。`src/main.ts` から `App.svelte` を手動マウントし、状態遷移はコンポーネント内部とストアで管理する。
+- **根拠**:
+  - **サーバ機能が構造的に使用不能** — ADR-004（ローカル `.md` ファイル保存）およびネットワーク禁止方針により CSP `connect-src 'none'` を設定する。SvelteKit の主要価値である SSR・`+page.server.ts` エンドポイント・`load` 関数によるデータフェッチは全て不可能。
+  - **永続化は Tauri IPC に統一済み** — フロントエンドからのファイルシステム直接アクセスは禁止され、全操作は `tauri-commands.ts` 経由の IPC で実行する。SvelteKit サーバ側の代替機能はアーキテクチャ上 Rust バックエンドが担っており、二重化のメリットがない。
+  - **ルーティング要件が現時点で存在しない** — requirements の「1 画面完結」コンセプトにより URL ベース遷移・複数ページモデルを要求する要件はない。現状の ViewMode/EditMode 切替は状態ベースで完結している。
+  - **バイナリサイズ優位性の維持** — ADR-002 採用根拠の「Tauri のバイナリサイズ優位性を活かす」に逆行するランタイム追加を避ける。
+- **却下した選択肢**:
+  - **SvelteKit + adapter-static（SPA モード）** — ファイルベースルーティングの DX は魅力だが、サーバ機能を使えない以上ルーティングライブラリ以上の価値を持たず、依存増加とビルド複雑化に見合わない。
+- **将来複数ページ構成が必要になった場合の代替手段**:
+  - **ルーティングが必要になった時点で `svelte-spa-router` を採用する。** ハッシュベースルーティングにより Tauri のカスタムスキーム（`tauri://localhost`）と整合し、History API 由来のディープリンク/リロード落とし穴を回避できる。reactive store + `{#if}` ブロックによる手書きルーターはルート数が増えた際の保守コストが高いため採用しない。
+  - **独立ウィンドウが必要な画面**: Tauri Multi-Window（`tauri.conf.json` の `windows` 配列）で別ウィンドウとして扱う。`svelte-spa-router` による URL ルーティングとは直交する選択肢であり、両者は併用可能。
+  - いずれの場合も CodeMirror 6 インスタンスの destroy → recreate ライフサイクル（Component Architecture §4 準拠）をルート遷移時の `onDestroy` で明示的に扱う必要がある。
+- **実装上の要件**:
+  - `package.json` に `@sveltejs/kit` および `@sveltejs/adapter-static` を含めない。
+  - `svelte.config.js` は `vitePreprocess()` のみを使用し、SvelteKit アダプタを設定しない。
+  - `vite.config.ts` は `@sveltejs/vite-plugin-svelte` の `svelte()` プラグインを使用し、`sveltekit()` プラグインは使用しない。
+  - `src/routes/` ディレクトリは設置しない（SvelteKit 規約との混同を避けるため）。
+
 ## 3. Follow-ups
 
 | ID | 項目 | トリガー条件 | 対応方針 |
@@ -144,3 +167,4 @@ codd:
 | FU-003 | Svelte メジャーバージョンアップ | Svelte 次期メジャーバージョンリリース時 | 破壊的変更の影響を評価し、移行計画を策定する。CodeMirror 6 との統合部分を重点確認する。 |
 | FU-004 | Tauri v2 以降の安定化 | Tauri 新メジャーバージョン安定版リリース時 | API 変更の影響を評価し、ファイルシステムアクセス（`fs` プラグイン）およびクリップボード操作（`clipboard-manager` プラグイン）の互換性を確認する。 |
 | FU-005 | CodeMirror 6 プラグインエコシステム監視 | 半年ごとの定期レビュー | Markdown ハイライトパッケージおよび frontmatter カスタマイズ関連の更新を確認し、必要に応じてアップデートする。 |
+| FU-006 | SvelteKit 採用の再評価 | 以下のいずれかが発生した場合: (a) 複数ページ構成への要件が追加される、(b) Web 版/ブラウザ配布が要件化される、(c) 動的パラメータを持つルートが 3 件以上発生する | 原則として `svelte-spa-router`（ADR-007 参照）を採用する。SvelteKit 採用は「ファイルベースルーティングの DX が本質的に必要」または「Web 版併売で SSR/プリレンダリングが必要」と判断された場合のみ、ADR-007 を更新する形で新規 ADR として起草する。 |

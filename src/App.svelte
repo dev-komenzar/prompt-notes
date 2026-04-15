@@ -1,96 +1,66 @@
-<!-- Sprint 13 – Root application component with SPA view routing -->
 <script lang="ts">
-  import { onMount } from "svelte";
-  import { currentView, config, addToast } from "./lib/stores";
-  import { getConfig } from "./lib/api";
-  import Editor from "./components/Editor.svelte";
-  import GridView from "./components/GridView.svelte";
-  import Settings from "./components/Settings.svelte";
-  import Toolbar from "./components/Toolbar.svelte";
-  import ToastContainer from "./components/ToastContainer.svelte";
+  import { onMount, onDestroy } from "svelte";
+  import { listen } from "@tauri-apps/api/event";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { saveNote } from "$lib/utils/tauri-commands";
+  import Header from "$lib/components/Header.svelte";
+  import Feed from "$lib/components/Feed.svelte";
+  import SettingsModal from "$lib/components/SettingsModal.svelte";
+  import type { NoteMetadata } from "$lib/utils/tauri-commands";
 
-  // Load config on startup
+  let settingsOpen = false;
+  let feed: Feed;
+  let unlistenClose: (() => void) | null = null;
+
+  // Track active editor for window-close save
+  let activeFilename: string | null = null;
+  let getActiveContent: (() => string) | null = null;
+
+  export function registerEditor(filename: string, getContent: () => string) {
+    activeFilename = filename;
+    getActiveContent = getContent;
+  }
+
+  export function unregisterEditor() {
+    activeFilename = null;
+    getActiveContent = null;
+  }
+
   onMount(async () => {
-    try {
-      const cfg = await getConfig();
-      config.set(cfg);
-      if (!cfg.notes_directory) {
-        addToast("warning", "No notes directory configured. Please set one in Settings.");
-        currentView.set("settings");
+    unlistenClose = await listen("before-close", async () => {
+      if (activeFilename && getActiveContent) {
+        try {
+          await saveNote(activeFilename, getActiveContent());
+        } catch (e) {
+          console.error("Failed to save on close:", e);
+        }
       }
-    } catch (e) {
-      addToast("error", `Failed to load config: ${e}`);
-    }
+      await getCurrentWindow().destroy();
+    });
   });
+
+  onDestroy(() => {
+    unlistenClose?.();
+  });
+
+  function handleNewNote(e: CustomEvent<NoteMetadata>) {
+    feed?.handleNewNote(e.detail);
+  }
 </script>
 
-<main class="app">
-  <Toolbar />
-  <div class="app-content">
-    {#if $currentView === "editor"}
-      <Editor />
-    {:else if $currentView === "grid"}
-      <GridView />
-    {:else if $currentView === "settings"}
-      <Settings />
-    {/if}
-  </div>
-  <ToastContainer />
-</main>
+<div class="app">
+  <Header on:newNote={handleNewNote} on:openSettings={() => (settingsOpen = true)} />
+  <Feed bind:this={feed} {registerEditor} {unregisterEditor} />
+  {#if settingsOpen}
+    <SettingsModal on:close={() => (settingsOpen = false)} />
+  {/if}
+</div>
 
 <style>
-  :global(*) {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-  }
-
-  :global(:root) {
-    --bg-primary: #1e1e2e;
-    --bg-secondary: #313244;
-    --bg-surface: #45475a;
-    --text-primary: #cdd6f4;
-    --text-secondary: #a6adc8;
-    --text-muted: #6c7086;
-    --accent-color: #89b4fa;
-    --accent-hover: #74c7ec;
-    --border-color: #585b70;
-    --success-color: #a6e3a1;
-    --warning-color: #f9e2af;
-    --error-color: #f38ba8;
-    --info-color: #89b4fa;
-    --toolbar-height: 48px;
-    --font-mono: "SF Mono", "Fira Code", "Cascadia Code", "JetBrains Mono", monospace;
-    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  }
-
-  :global(body) {
-    font-family: var(--font-sans);
-    background-color: var(--bg-primary);
-    color: var(--text-primary);
-    overflow: hidden;
-    height: 100vh;
-    width: 100vw;
-  }
-
-  :global(#app) {
-    height: 100vh;
-    width: 100vw;
-    display: flex;
-    flex-direction: column;
-  }
-
   .app {
     display: flex;
     flex-direction: column;
-    height: 100vh;
-    width: 100vw;
+    height: 100%;
     overflow: hidden;
-  }
-
-  .app-content {
-    flex: 1;
-    overflow: hidden;
-    position: relative;
   }
 </style>

@@ -1,28 +1,51 @@
 <script lang="ts">
-  import { page } from '$app/stores';
-  import { goto } from '$app/navigation';
-  import { newNote } from '$lib/stores';
+  import { onMount, onDestroy, createEventDispatcher } from "svelte";
+  import { listen } from "@tauri-apps/api/event";
+  import { createNote } from "$lib/utils/tauri-commands";
+  import SearchBar from "./SearchBar.svelte";
+  import TagFilter from "./TagFilter.svelte";
+  import DateFilter from "./DateFilter.svelte";
 
-  function handleNewNote() {
-    newNote();
-    goto('/new');
+  const dispatch = createEventDispatcher();
+  let unlisten: (() => void) | null = null;
+  let creating = false;
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  async function handleNewNote() {
+    if (creating) return;
+    if (debounceTimer) clearTimeout(debounceTimer);
+    creating = true;
+    try {
+      const meta = await createNote();
+      dispatch("newNote", meta);
+    } catch (e) {
+      console.error("Failed to create note:", e);
+    } finally {
+      debounceTimer = setTimeout(() => { creating = false; }, 500);
+    }
   }
 
-  let currentPath = $derived($page.url.pathname);
+  onMount(async () => {
+    unlisten = await listen("new-note", () => handleNewNote());
+  });
+
+  onDestroy(() => {
+    unlisten?.();
+    if (debounceTimer) clearTimeout(debounceTimer);
+  });
 </script>
 
 <header class="header">
   <div class="header-left">
-    <a href="/" class="logo">PromptNotes</a>
+    <button class="btn-new" on:click={handleNewNote} disabled={creating}>+ New</button>
+    <button class="btn-settings" on:click={() => dispatch("openSettings")}>⚙️</button>
   </div>
-  <nav class="header-nav">
-    <a href="/" class:active={currentPath === '/'}>Grid</a>
-    <a href="/settings" class:active={currentPath === '/settings'}>Settings</a>
-  </nav>
+  <div class="header-center">
+    <SearchBar />
+  </div>
   <div class="header-right">
-    <button class="new-note-btn" onclick={handleNewNote} title="New Note (Cmd+N)">
-      + New
-    </button>
+    <TagFilter />
+    <DateFilter />
   </div>
 </header>
 
@@ -30,65 +53,36 @@
   .header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 0 16px;
-    height: 48px;
-    background-color: var(--color-surface);
-    border-bottom: 1px solid var(--color-border);
+    gap: 12px;
+    padding: 8px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
-
   .header-left {
     display: flex;
+    gap: 8px;
     align-items: center;
   }
-
-  .logo {
-    font-size: 16px;
-    font-weight: 700;
-    color: var(--color-primary);
-    text-decoration: none;
+  .header-center {
+    flex: 1;
   }
-
-  .header-nav {
-    display: flex;
-    gap: 16px;
-  }
-
-  .header-nav a {
-    color: var(--color-text-muted);
-    text-decoration: none;
-    font-size: 14px;
-    padding: 4px 8px;
-    border-radius: var(--radius-sm);
-    transition: color 0.15s, background-color 0.15s;
-  }
-
-  .header-nav a:hover {
-    color: var(--color-text);
-  }
-
-  .header-nav a.active {
-    color: var(--color-primary);
-    background-color: rgba(137, 180, 250, 0.1);
-  }
-
   .header-right {
     display: flex;
+    gap: 8px;
     align-items: center;
   }
-
-  .new-note-btn {
-    padding: 6px 14px;
-    background-color: var(--color-primary);
-    color: var(--color-bg);
-    border-radius: var(--radius-sm);
-    font-size: 13px;
+  .btn-new {
+    padding: 6px 16px;
+    background: var(--accent);
+    color: white;
+    border-radius: 6px;
     font-weight: 600;
-    transition: background-color 0.15s;
   }
-
-  .new-note-btn:hover {
-    background-color: var(--color-primary-hover);
+  .btn-new:hover:not(:disabled) { background: var(--accent-hover); }
+  .btn-new:disabled { opacity: 0.5; }
+  .btn-settings {
+    font-size: 18px;
+    padding: 4px 8px;
   }
 </style>

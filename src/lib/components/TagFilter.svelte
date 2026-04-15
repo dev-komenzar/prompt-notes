@@ -1,80 +1,106 @@
 <script lang="ts">
-  import {
-    getNotesState,
-    setSelectedTags,
-    loadNotes,
-    performSearch
-  } from '../stores/notes.svelte';
+  import { onMount } from "svelte";
+  import { filters } from "$lib/stores/filters";
+  import { notes } from "$lib/stores/notes";
+  import { listAllTags } from "$lib/utils/tauri-commands";
 
-  const state = getNotesState();
+  let allTags: string[] = [];
+  let selectedTags: string[] = [];
+  let open = false;
 
-  // Collect all unique tags from notes
-  let allTags = $derived(() => {
-    const tagSet = new Set<string>();
-    for (const note of state.notes) {
-      for (const tag of note.tags) {
-        tagSet.add(tag);
-      }
-    }
-    return Array.from(tagSet).sort();
-  });
+  $: isDefault = selectedTags.length === 0 && $filters.query === "";
 
-  function toggleTag(tag: string) {
-    const current = state.selectedTags;
-    if (current.includes(tag)) {
-      setSelectedTags(current.filter((t) => t !== tag));
+  $: {
+    if (isDefault) {
+      loadAllTags();
     } else {
-      setSelectedTags([...current, tag]);
-    }
-    if (state.searchQuery.trim()) {
-      performSearch();
-    } else {
-      loadNotes();
+      allTags = [...new Set($notes.flatMap((n) => n.tags))].sort();
     }
   }
+
+  async function loadAllTags() {
+    try {
+      allTags = await listAllTags();
+    } catch { /* ignore */ }
+  }
+
+  function toggle(tag: string) {
+    if (selectedTags.includes(tag)) {
+      selectedTags = selectedTags.filter((t) => t !== tag);
+    } else {
+      selectedTags = [...selectedTags, tag];
+    }
+    filters.update((f) => ({ ...f, tags: selectedTags }));
+  }
+
+  function clear() {
+    selectedTags = [];
+    filters.update((f) => ({ ...f, tags: [] }));
+  }
+
+  onMount(loadAllTags);
 </script>
 
-{#if allTags().length > 0}
-  <div class="tag-filter" data-testid="tag-filter" aria-label="tag filter">
-    {#each allTags() as tag}
-      <button
-        class="tag-chip"
-        class:active={state.selectedTags.includes(tag)}
-        onclick={() => toggleTag(tag)}
-        type="button"
-      >
-        #{tag}
-      </button>
-    {/each}
-  </div>
-{/if}
+<div class="tag-filter">
+  <button class="toggle" on:click={() => (open = !open)}>
+    Tags{selectedTags.length > 0 ? ` (${selectedTags.length})` : ""}
+  </button>
+  {#if open}
+    <div class="dropdown">
+      {#if selectedTags.length > 0}
+        <button class="clear-btn" on:click={clear}>Clear</button>
+      {/if}
+      {#each allTags as tag}
+        <label class="tag-option">
+          <input type="checkbox" checked={selectedTags.includes(tag)} on:change={() => toggle(tag)} />
+          {tag}
+        </label>
+      {/each}
+      {#if allTags.length === 0}
+        <span class="empty">No tags</span>
+      {/if}
+    </div>
+  {/if}
+</div>
 
 <style>
-  .tag-filter {
+  .tag-filter { position: relative; }
+  .toggle {
+    padding: 6px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 13px;
+  }
+  .dropdown {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 4px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px;
+    min-width: 160px;
+    z-index: 100;
     display: flex;
-    flex-wrap: wrap;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+  .tag-option {
+    display: flex;
+    align-items: center;
     gap: 6px;
-    padding: 8px 16px;
-    background: var(--color-surface);
-    border-bottom: 1px solid var(--color-border);
+    font-size: 13px;
+    cursor: pointer;
   }
-
-  .tag-chip {
+  .clear-btn {
     font-size: 12px;
-    padding: 4px 10px;
-    border-radius: 12px;
-    color: var(--color-tag);
-    background: rgba(148, 226, 213, 0.1);
-    border: 1px solid transparent;
-    transition: all var(--transition-fast);
+    color: var(--accent);
+    text-align: left;
+    padding: 2px 0;
   }
-
-  .tag-chip:hover {
-    background: rgba(148, 226, 213, 0.2);
-  }
-
-  .tag-chip.active {
-    background: rgba(148, 226, 213, 0.3);
-    border-color: var(--color-tag);
-  }
+  .empty { color: var(--text-muted); font-size: 13px; }
 </style>

@@ -247,7 +247,7 @@ tags: [gpt, coding]
 | コマンド名 | 引数 | 戻り値 | 責務 |
 |---|---|---|---|
 | `create_note` | なし | `{ filename: string, path: string }` | 新規 `.md` ファイルを作成し、ファイル名とパスを返す |
-| `save_note` | `{ filename: string, content: string }` | `{ success: boolean }` | ノート内容をファイルに書き込む（自動保存） |
+| `save_note` | `{ filename: string, content: string }` | `NoteMetadata` | ノート内容をファイルに書き込み、更新後のメタデータ（`body_preview`, `tags` 含む）を返す（自動保存時にフロントエンドの一覧表示を即時更新するため） |
 | `delete_note` | `{ filename: string }` | `{ success: boolean }` | ファイルをファイルシステムから削除する |
 | `list_notes` | `{ from_date?: string, to_date?: string, tags?: string[] }` | `NoteMetadata[]` | フィルタ条件に合致するノートメタデータ一覧を返す |
 | `read_note` | `{ filename: string }` | `{ content: string, tags: string[] }` | ファイルを読み込み、本文と frontmatter を返す |
@@ -289,9 +289,10 @@ interface NoteMetadata {
              invoke("save_note", { filename, content })
 3. Backend:  content をパースし frontmatter(tags) + 本文に分離
              ファイルに書き込み
-             { success: true } を返却
-4. Frontend: カードを表示モードに切替
-             更新後の内容を反映
+             更新後の NoteMetadata を返却
+4. Frontend: 返却された NoteMetadata で `notes` store のエントリを更新
+             カードを表示モードに切替
+             更新後の `body_preview` / `tags` が表示モードに反映される
 ```
 
 #### 検索・フィルタフロー
