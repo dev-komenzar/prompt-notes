@@ -122,6 +122,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 | 1-12 | ESLint 設定 | `.eslintrc.json` | `no-restricted-imports`: `@tauri-apps/plugin-fs`（直接ファイルシステムアクセス禁止）、`@tauri-apps/plugin-clipboard-manager`（直接クリップボードアクセス禁止）。`no-restricted-globals`: `navigator.clipboard`（Web Clipboard API 禁止） |
 | 1-13 | グローバルショートカット登録 | `src-tauri/src/main.rs` | `tauri-plugin-global-shortcut` で `CmdOrCtrl+N` を登録し、`new-note` イベントを WebView に emit |
 | 1-14 | Svelte プロジェクト初期化 | `src/`, `svelte.config.js`, `vite.config.ts` | Svelte 5.x + TypeScript 5.x。ルートコンポーネント `App.svelte` のスケルトン |
+| 1-15 | TS 単体テストランナー整備 | `package.json`, `package-lock.json` | `vitest` を devDependencies に追加し、`scripts.test = "vitest run"` を定義。`tests/unit/*.test.ts` が依存する `js-yaml` / `@types/js-yaml` も devDependencies として固定。`direnv exec . npm test` で vitest が起動することをセットアップ完了の判定基準とする |
 
 **検証基準:**
 
@@ -132,6 +133,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 | 単体テスト (Rust) | `config/mod.rs` | デフォルトパス生成が OS 別に正しい。`config.json` 不在時の新規作成。無効ディレクトリの拒否 |
 | 単体テスト (Rust) | `commands/notes.rs` | `create_note` がファイルを作成し `NoteMetadata` を返却。`save_note` がファイルを上書き。`list_notes` が降順ソート済み `ListNotesResult` を返却 |
 | 単体テスト (TS) | `timestamp.ts` | ファイル名↔日時変換の正確性 |
+| テストランナー起動 | `npm test` | `direnv exec . npm test` が exit 0 で完了し vitest が `tests/unit/*.test.ts` を発見・実行する |
 | ESLint チェック | 全フロントエンドファイル | 禁止インポート・禁止グローバルの違反ゼロ |
 
 ---

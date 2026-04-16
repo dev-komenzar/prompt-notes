@@ -69,3 +69,37 @@ direnv exec . bash -c 'pnpm exec vitest run tests/unit/frontmatter.test.ts tests
 ## 優先度
 
 中。GREEN 確認は Rust 側の 3 ケースで本質は担保できており、TS スタブの 25 ケースは「本番側バグ修正には不要な仕様化テスト」にあたるため、ブロッカーではない。ただし今後 CoDD の Sprint で TS 単体テストを書き足す際に必須になる。
+
+## 解決 (2026-04-16)
+
+採用案: **案 A の改訂版（npm ベース）**。
+
+### 経緯
+
+- 本セッション開始時に `direnv exec . npm --version` を再試行したところ正常応答（10.8.2）。タスク起票時の ENOENT は nix store GC の一過性問題と判断し、npm シムは現状動作している。
+- プロジェクトの既存ロックファイルは `package-lock.json` のみ。pnpm 移行は dual lockfile drift を招くため見送り、npm を継続使用する方針をユーザー判断で確定。
+
+### 実施内容
+
+1. `direnv exec . npm install --save-dev vitest` → `vitest@4.1.4` を `devDependencies` に追加し `package-lock.json` を更新。
+2. `direnv exec . npm install --save-dev js-yaml @types/js-yaml` → `tests/unit/yaml-utils.ts` の依存を解消（vitest 起動時の suite collection 失敗を解消）。
+3. `package.json` `scripts.test` に `"vitest run"` を追加。
+4. `docs/plan/implementation_plan.md` Sprint 1 に成果物 `1-15 TS 単体テストランナー整備` と検証基準「テストランナー起動」を追加。
+
+### 動作確認
+
+```
+$ direnv exec . npm test
+...
+Test Files  3 passed (96 中 3 / 残り 93 は別件の既存テスト失敗)
+$ direnv exec . npx vitest run tests/unit/frontmatter.test.ts tests/unit/prod-frontmatter.test.ts
+Test Files  2 passed (2)
+Tests       25 passed (25)
+```
+
+タスク 001 が直接対象とした 25 ケースは全 pass。`src/generated/sprint_6/**` 配下の他テスト群の失敗（93 ファイル）は別問題で、本タスクのスコープ外。
+
+### 本タスク完了後にやり残し
+
+- `src/generated/sprint_6/**` の `__tauriInvokeSearchNotes` 不在エラー / `extractTagsForDisplay` の null アクセスは個別のテスト品質課題として別タスク化が必要。
+- npm シムの nix-slim 参照切れ（問題 1）は再発の可能性あり。次に再現したら別タスクで `flake.nix` 側の根治を検討。
