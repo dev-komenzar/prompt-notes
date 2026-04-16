@@ -583,6 +583,21 @@ HighlightRange {
 
 ソートは `file_manager.rs` の `list_files()` および `search.rs` の `full_scan()` の戻り値生成時に適用される。ソートの実装はファイル名の文字列比較（`YYYY-MM-DDTHHMMSS` 形式は辞書順 = 時系列順）で実行し、日時パースのオーバーヘッドを回避する。
 
+### 4.4b ノートカードのレイアウト制約
+
+`Feed.svelte` は `display: flex; flex-direction: column; overflow-y: auto` の縦スクロールコンテナとしてカードを並べる。この構成下では各 `NoteCard.svelte` が **flex item** として扱われるため、フィード内のノート件数や個別カードの本文長によっては子要素が縦方向に圧縮される可能性がある。`NoteCard.svelte` は `overflow: hidden` を持つため、圧縮された場合フッタ領域（タグ・タイムスタンプ・`CopyButton` / `DeleteButton`）が視覚的にクリップされ、AC-EDIT-06 / 06b / 07 の視認性要件に違反する。
+
+これを構造的に防ぐため、以下のレイアウト制約を必須とする。
+
+| 制約 | 適用先 | 内容 | 理由 |
+|---|---|---|---|
+| flex 縮小の禁止 | `.note-card` | `flex-shrink: 0` を必ず付与する | フィードのコンテナ高さや兄弟カードのサイズに関わらず、各カードが自然サイズ（本文プレビュー + フッタの合計）を維持すること |
+| 本文プレビューの最大高さ | `.card-body` | `max-height: 120px; overflow: hidden` で本文表示を制限 | 1 カードがフィード全体を占有してフッタを画面外に追いやることを防ぐ |
+| フッタの常時可視 | `.card-footer` | `display: flex` のフレックス行として `card-tags` / `card-time` / `card-actions` を配置し、いずれかが省略されてもボタン領域は維持する | `CopyButton` / `DeleteButton` がカード外にレイアウトされたり、上位要素の `overflow: hidden` で潰されないこと |
+| スクロール制御の単一所有 | `.feed` | 縦スクロール (`overflow-y: auto`) は `Feed.svelte` のルートが単独で持ち、子カードに二重のスクロール領域を作らない | スクロール末尾検出（無限スクロール）の挙動を一意に保つ |
+
+これらの制約は `NoteCard.svelte` / `Feed.svelte` の `<style>` ブロック内で実装され、AC-EDIT-06 / 06b / 07 の「bounding box が 0 でない」「親 `overflow` でクリップされない」「`elementFromPoint()` でボタンが取得できる」等の視認性条件と一対一に対応する。
+
 ### 4.5 カードクリック→編集遷移の実装
 
 `Feed.svelte` は現在編集中のカードの `filename` を状態として保持する（`let editingFilename: string | null = null`）。カードクリック時の処理は以下の通り。

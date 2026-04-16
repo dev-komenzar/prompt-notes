@@ -320,10 +320,10 @@ sequenceDiagram
 | `src/lib/stores/searchResults.ts` | `module:feed` | 検索結果のスニペット・ハイライト情報（`Writable<SearchResultEntry[] | null>`）。`search_notes` レスポンス時に更新、`list_notes` フォールバック時は `null` |
 | `src/lib/stores/totalCount.ts` | `module:feed` | フィルタ条件に合致する全ノート数（`Writable<number>`）。ページネーション（スクロールロード）の次ページ有無判定に使用 |
 | `src/lib/stores/config.ts` | `module:settings` | 設定状態のキャッシュ |
-| `src/lib/components/NoteCard.svelte` | `module:editor` | ノートカードの表示/編集モード制御 |
+| `src/lib/components/NoteCard.svelte` | `module:editor` | ノートカードの表示/編集モード制御。**Feed 内の flex 縮小を防ぐためのレイアウト制約**（`flex-shrink: 0` 等）は `detail:feed_search` §4.4b を参照 |
 | `src/lib/components/NoteEditor.svelte` | `module:editor` | CodeMirror 6 インスタンスのライフサイクル管理 |
-| `src/lib/components/CopyButton.svelte` | `module:editor` | コピー操作 UI とフィードバック。**表示モード・編集モードの両方で常時マウントされ、モード遷移で再マウントしない**（詳細は `detail:editor_clipboard` §2.1 / §4.4 を参照） |
-| `src/lib/components/DeleteButton.svelte` | `module:editor` | 削除操作 UI |
+| `src/lib/components/CopyButton.svelte` | `module:editor` | コピー操作 UI とフィードバック。**表示モード・編集モードの両方で常時マウントされ、モード遷移で再マウントしない**（詳細は `detail:editor_clipboard` §2.1 / §4.4 を参照）。**絵文字単体表示は禁止**でテキストラベル + 枠線により視認性を保証する |
+| `src/lib/components/DeleteButton.svelte` | `module:editor` | 削除操作 UI（テキストラベル `Delete` + 枠線で視認性を保証、絵文字単体表示は禁止）。詳細は `detail:editor_clipboard` §4.4b を参照 |
 | `src/lib/components/Feed.svelte` | `module:feed` | ノートカード一覧のレンダリング（降順ソート） |
 | `src/lib/components/SearchBar.svelte` | `module:feed` | 検索入力 UI |
 | `src/lib/components/TagFilter.svelte` | `module:feed` | タグフィルタ UI（複数選択時は OR 条件） |

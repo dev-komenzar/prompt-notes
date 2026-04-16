@@ -421,30 +421,91 @@ const frontmatterDecoration = () => ViewPlugin.fromClass(
 | 表示条件 | **ViewMode / EditMode の両方で常時表示**。`NoteCard.svelte` は `{#if editing}` / `{:else}` 分岐の外側（モード共通領域）に `CopyButton` を配置し、モード遷移で再マウントしない |
 | コピー対象 | frontmatter を除去した本文全体（`frontmatter.ts` の `extractBody()` で生成）。ソース取得元は EditMode では `NoteEditor.getContent()`（未保存 Doc）、ViewMode では `readNote()`（保存済みファイル） |
 | 編集への副作用 | EditMode でのコピー操作は自動保存を誘発せず、EditorView のフォーカス・選択状態・Undo 履歴を変更しない |
-| レイアウト | EditMode では CodeMirror 6 の入力領域と重ならない位置（例: カード右上固定、またはモード共通フッタ）に配置する |
+| レイアウト | EditMode では CodeMirror 6 の入力領域と重ならない位置（例: カード右上固定、またはモード共通フッタ）に配置する。**ボタンは枠線・背景・テキストラベルを持ち、絵文字フォント非依存で常に視認可能であること**（後述の視認性要件参照） |
 | IPC 経路 | `tauri-commands.ts` の `copyToClipboard(text)` → `commands/clipboard.rs` の `copy_to_clipboard` → Tauri `clipboard-manager` プラグイン |
-| 視覚フィードバック | コピー成功時: アイコンを「✓」に変更し、`text-green-500` クラスを適用。2,000ms 後にデフォルトのコピーアイコンに復帰 |
-| エラー時 | コピー失敗時: アイコンを「✕」に変更し、`text-red-500` クラスを適用。3,000ms 後にデフォルトに復帰。コンソールにエラーをログ出力 |
+| ラベル表記 | 既定: `Copy`（テキスト）。成功時: `✓ Copied`。失敗時: `✕ Failed`。**絵文字単体での表示は禁止**（描画フォントに依存して不可視化するリスクがあるため、テキストとの併記または SVG アイコンを用いる） |
+| 視覚フィードバック | コピー成功時: ラベルを `✓ Copied` に変更し、`color: var(--success)` および同色の `border-color` を適用。2,000ms 後に既定の `Copy` ラベルへ復帰 |
+| エラー時 | コピー失敗時: ラベルを `✕ Failed` に変更し、`color: var(--danger)` および同色の `border-color` を適用。3,000ms 後に既定へ復帰。コンソールにエラーをログ出力 |
+| スタイル基盤 | プロジェクトは Tailwind を採用しないため、**カラー指定は `src/styles/global.css` で定義する CSS カスタムプロパティ**（`--surface`, `--surface-hover`, `--border`, `--text`, `--success`, `--danger`, `--accent`）を使用する。デフォルト時はカード背景と区別できる枠線（`1px solid var(--border)`）と背景（`var(--surface)`）を持ち、ホバー時は `var(--surface-hover)` + `var(--accent)` 枠で強調する |
 | 連打防止 | フィードバック表示中（2,000ms / 3,000ms）はボタンを `disabled` にし、重複 IPC 呼び出しを防止 |
+| 視認性要件 | DOM への描画だけでなく、bounding box の幅・高さがいずれも 0 でないこと、親 (`NoteCard` / `Feed`) の `overflow` 制約・flex 縮小によりクリップされないこと、`elementFromPoint()` でボタン要素が取得できること（被覆されていないこと）。AC-EDIT-06 / AC-EDIT-06b の否定条件と一致する |
 
 ```svelte
 <button
-  class="copy-button"
+  class="copy-btn"
+  class:success={state === 'success'}
+  class:error={state === 'error'}
   on:click={handleCopy}
   disabled={copying}
-  aria-label="本文をコピー"
+  aria-label="Copy note body"
+  title="本文をコピー"
 >
-  {#if copyState === 'success'}
-    <CheckIcon class="text-green-500" />
-  {:else if copyState === 'error'}
-    <XIcon class="text-red-500" />
-  {:else}
-    <CopyIcon />
-  {/if}
+  {#if state === 'success'}✓ Copied{:else if state === 'error'}✕ Failed{:else}Copy{/if}
 </button>
+
+<style>
+  .copy-btn {
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 12px;
+    background: var(--surface);
+    color: var(--text);
+    transition: all 0.15s;
+  }
+  .copy-btn:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--accent); }
+  .copy-btn:disabled { opacity: 0.5; }
+  .success { color: var(--success); border-color: var(--success); }
+  .error { color: var(--danger); border-color: var(--danger); }
+</style>
 ```
 
 本設計は制約 3「1 クリックコピーボタンによる本文全体のクリップボードコピーはアプリの核心 UX。未実装ならリリース不可」に準拠する。
+
+### 4.4b DeleteButton の実装仕様
+
+`DeleteButton.svelte` は以下の動作を実装する。CopyButton と同様に **絵文字単体表示は禁止** し、テキストラベルと枠線で常に視認可能とする。
+
+| 項目 | 仕様 |
+|---|---|
+| 表示条件 | `NoteCard.svelte` の表示モード（`{:else}` 分岐内）のフッタ領域に常時マウントされる。編集モード中は `NoteEditor` がカード内を占有するため非表示で良い |
+| ラベル表記 | 既定: `Delete`（テキスト）。**絵文字単体での表示は禁止**。確認ダイアログ表示時は `削除する` / `キャンセル` のボタンに置き換わる |
+| IPC 経路 | `tauri-commands.ts` の `deleteNote(filename)` → `commands/notes.rs` の `delete_note` → `trash` クレートで OS のゴミ箱へ移動。ゴミ箱が利用不可な場合 `TRASH_FAILED` エラーを返却し、UI 側で確認ダイアログを表示 → `forceDeleteNote()` で `std::fs::remove_file()` による完全削除を行う（OQ-EDIT-004 / OQ-ARCH-003 の決定に従う） |
+| イベント | 削除成功時に `dispatch("deleted")` を発火し、親 `NoteCard` 経由で `Feed` の `notes` store からノートを除去する |
+| 連打防止 | IPC 処理中は `disabled` にし、二重発行を防止 |
+| スタイル基盤 | プロジェクトは Tailwind を採用しないため、カラー指定は `src/styles/global.css` の CSS カスタムプロパティ（`--surface`, `--surface-hover`, `--border`, `--danger`）を使用する。デフォルト時は枠線（`1px solid var(--border)`）と背景（`var(--surface)`）、文字色は危険操作を示す `var(--danger)`、ホバー時に枠線も `var(--danger)` に変化させる |
+| 視認性要件 | bounding box の幅・高さがいずれも 0 でないこと、親 (`NoteCard` / `Feed`) の `overflow` 制約・flex 縮小によりクリップされないこと、`elementFromPoint()` でボタン要素が取得できること（被覆されていないこと）。AC-EDIT-07 の否定条件と一致する |
+
+```svelte
+{#if confirmForce}
+  <div class="confirm-dialog">
+    <span>ゴミ箱が利用できません。完全に削除しますか？</span>
+    <button class="btn-danger" on:click={handleForceDelete}>削除する</button>
+    <button on:click={() => (confirmForce = false)}>キャンセル</button>
+  </div>
+{:else}
+  <button
+    class="delete-btn"
+    on:click={handleDelete}
+    disabled={deleting}
+    aria-label="Delete note"
+    title="ノートを削除"
+  >Delete</button>
+{/if}
+
+<style>
+  .delete-btn {
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 12px;
+    background: var(--surface);
+    color: var(--danger);
+  }
+  .delete-btn:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--danger); }
+  .delete-btn:disabled { opacity: 0.5; }
+</style>
+```
 
 ### 4.5 新規ノート作成ショートカットの実装
 
