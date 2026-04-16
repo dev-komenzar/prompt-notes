@@ -31,6 +31,10 @@
 - ソースコードを編集 → `codd propagate` で CEG グラフを辿って影響する設計書を特定 → `--update` で AI が設計書を追従更新
 - `codd scan` で依存グラフを再構築 (Edit/Write 時に hook で自動実行するのが推奨)
 
+### ナレッジ
+
+- [codd generate の挙動](knowledge/codd-generate-behavior.md) — `--wave` 単位で動作し node_id 指定不可。force 無しは exists 判定で skip、依存追従には `--force` が必要。
+
 ## コミット
 
 ### コミットメッセージのテンプレート
