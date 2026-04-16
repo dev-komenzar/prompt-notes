@@ -4,8 +4,8 @@ project:
   name: promptnotes
   language: typescript
 ai_commands:
-  generate: claude --print --model claude-opus-4-6 --tools "" --system-prompt "Output ONLY the requested content. Never wrap output in Markdown fences. Never add summaries, headings, or explanatory prose before or after the output."
-  implement: 'claude --print --model claude-sonnet-4-6 --tools ""'
+  generate: scripts/codd-generate-wrapper.sh
+  implement: scripts/codd-implement-diff-v17.sh
 
 coding_principles: null
 scan:
