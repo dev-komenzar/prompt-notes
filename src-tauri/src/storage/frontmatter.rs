@@ -24,7 +24,12 @@ pub fn parse(content: &str) -> ParseResult {
     let rest = &content[4..];
     if let Some(pos) = rest.find("\n---\n") {
         let yaml = &rest[..pos];
-        let body_start = 4 + pos + 5;
+        let mut body_start = 4 + pos + 5;
+        // ADR-008: ファイルレイアウト `---\n<yaml>\n---\n\n<body>` の
+        // 閉じフェンス直後の separator `\n` を body から除外する
+        if body_start < content.len() && content.as_bytes()[body_start] == b'\n' {
+            body_start += 1;
+        }
         let body = if body_start < content.len() {
             content[body_start..].to_string()
         } else {

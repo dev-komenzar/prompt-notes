@@ -25,7 +25,8 @@ export interface Frontmatter {
 }
 
 const FRONTMATTER_OPEN = '---';
-const FRONTMATTER_REGEX = /^---\n([\s\S]*?)\n---\n?/;
+// ADR-008: 閉じフェンス `\n---\n` の直後に separator `\n` が 1 つあれば body に含めない
+const FRONTMATTER_REGEX = /^---\n([\s\S]*?)\n---\n\n?/;
 
 export function createEmptyFrontmatter(): Frontmatter {
   return { tags: [], extra: {} };
@@ -97,7 +98,8 @@ export function serializeFrontmatter(frontmatter: Frontmatter, body: string): st
   const yamlStr = stringifyYaml(mapping);
   const trimmed = yamlStr.endsWith('\n') ? yamlStr.slice(0, -1) : yamlStr;
 
-  return `---\n${trimmed}\n---\n${body}`;
+  // ADR-008: 閉じフェンス後に separator `\n` を 1 つ置いた上で body を続ける
+  return `---\n${trimmed}\n---\n\n${body}`;
 }
 
 function normalizeTags(raw: unknown): string[] {

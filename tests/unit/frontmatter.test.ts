@@ -146,7 +146,7 @@ describe('serializeFrontmatter', () => {
     expect(result).toContain('tags:');
     expect(result).toContain('gpt');
     expect(result).toContain('coding');
-    expect(result).toContain('---\nBody text');
+    expect(result).toContain('---\n\nBody text');
   });
 
   it('preserves extra fields on serialization', () => {
@@ -165,7 +165,7 @@ describe('serializeFrontmatter', () => {
     const result = serializeFrontmatter(fm, 'Body');
     expect(result).toMatch(/^---\n/);
     expect(result).toContain('tags: []');
-    expect(result).toMatch(/---\nBody$/);
+    expect(result).toMatch(/---\n\nBody$/);
   });
 });
 
