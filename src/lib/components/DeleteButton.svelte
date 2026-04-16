@@ -52,16 +52,21 @@
     on:click={handleDelete}
     disabled={deleting}
     aria-label="Delete note"
-  >🗑</button>
+    title="ノートを削除"
+  >Delete</button>
 {/if}
 
 <style>
   .delete-btn {
-    padding: 4px 8px;
+    padding: 4px 10px;
+    border: 1px solid var(--border);
     border-radius: 4px;
-    font-size: 14px;
+    font-size: 12px;
+    background: var(--surface);
+    color: var(--danger, #ef4444);
   }
-  .delete-btn:hover:not(:disabled) { background: var(--surface-hover); }
+  .delete-btn:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--danger, #ef4444); }
+  .delete-btn:disabled { opacity: 0.5; }
   .confirm-dialog {
     display: flex;
     align-items: center;

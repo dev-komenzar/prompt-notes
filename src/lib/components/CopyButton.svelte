@@ -32,19 +32,23 @@
   on:click={handleCopy}
   disabled={copying}
   aria-label="Copy note body"
+  title="本文をコピー"
 >
-  {#if state === "success"}✓{:else if state === "error"}✕{:else}📋{/if}
+  {#if state === "success"}✓ Copied{:else if state === "error"}✕ Failed{:else}Copy{/if}
 </button>
 
 <style>
   .copy-btn {
-    padding: 4px 8px;
+    padding: 4px 10px;
+    border: 1px solid var(--border);
     border-radius: 4px;
-    font-size: 14px;
+    font-size: 12px;
+    background: var(--surface);
+    color: var(--text);
     transition: all 0.15s;
   }
-  .copy-btn:hover:not(:disabled) { background: var(--surface-hover); }
+  .copy-btn:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--accent); }
   .copy-btn:disabled { opacity: 0.5; }
-  .success { color: var(--success); }
-  .error { color: var(--danger); }
+  .success { color: var(--success); border-color: var(--success); }
+  .error { color: var(--danger); border-color: var(--danger); }
 </style>

@@ -92,7 +92,7 @@
       </div>
       <div class="card-footer">
         <div class="card-tags">
-          {#each metadata.tags as tag}
+          {#each metadata.tags ?? [] as tag}
             <span class="tag">{tag}</span>
           {/each}
         </div>
@@ -134,6 +134,7 @@
     border-radius: 8px;
     overflow: hidden;
     transition: border-color 0.15s;
+    flex-shrink: 0;
   }
   .note-card:not(.editing):hover {
     border-color: var(--accent);
