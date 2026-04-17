@@ -76,9 +76,13 @@ if [[ -d "$ABS_OUTPUT_DIR" ]]; then
 fi
 
 # --- 6. Capture recent docs diff (best-effort, never fatal) ----------------
+# CODD_DIFF_REF で diff の基準を変更可能 (default: HEAD~1)
+#   例: CODD_DIFF_REF=HEAD~3 codd implement --sprint 1
+#        CODD_DIFF_REF=main  codd implement --sprint 1
+CODD_DIFF_REF="${CODD_DIFF_REF:-HEAD~1}"
 DOC_DIFF=""
-if git -C "$PROJECT_ROOT" rev-parse --verify HEAD~1 >/dev/null 2>&1; then
-  DOC_DIFF="$(git -C "$PROJECT_ROOT" --no-pager diff --unified=3 HEAD~1 -- docs/ 2>/dev/null || true)"
+if git -C "$PROJECT_ROOT" rev-parse --verify "$CODD_DIFF_REF" >/dev/null 2>&1; then
+  DOC_DIFF="$(git -C "$PROJECT_ROOT" --no-pager diff --unified=3 "$CODD_DIFF_REF" -- docs/ 2>/dev/null || true)"
 else
   DOC_DIFF="$(git -C "$PROJECT_ROOT" --no-pager diff --unified=3 HEAD -- docs/ 2>/dev/null || true)"
 fi
