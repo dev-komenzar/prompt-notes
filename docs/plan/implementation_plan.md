@@ -187,7 +187,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 | # | 成果物 | ファイル | 詳細 |
 |---|---|---|---|
-| 3-1 | `Feed.svelte` | `src/lib/components/Feed.svelte` | `filters` store の reactive 監視 → `query` 空: `listNotes()` / `query` 非空: `searchNotes()` を自動発行。結果を `notes` store・`searchResults` store・`totalCount` store に反映。カード一覧を降順レンダリング。編集状態調停: `editingFilename: string | null` で同時編集カード最大 1 つを強制。スクロール末尾到達で `loadNextPage()`（`offset += 100`）。`totalCount` 超過時は追加取得しない。**レイアウト制約（§4.4b 準拠）**: ルートが `display: flex; flex-direction: column; overflow-y: auto` の単一スクロール領域として振る舞い、子カードに二重スクロールを作らない |
+| 3-1 | `Feed.svelte` | `src/lib/components/Feed.svelte` | `filters` store の reactive 監視 → `query` 空: `listNotes()` / `query` 非空: `searchNotes()` を自動発行。結果を `notes` store・`searchResults` store・`totalCount` store に反映。カード一覧を降順レンダリング。編集状態調停: `editingFilename: string | null` で同時編集カード最大 1 つを強制。スクロール末尾到達で `loadNextPage()`（`offset += 100`）。`totalCount` 超過時は追加取得しない。**レイアウト制約（§4.4b 準拠）**: ルートが `display: flex; flex-direction: column; overflow-y: auto` の単一スクロール領域として振る舞い、子カードに二重スクロールを作らない。**アニメーション（Component Architecture §4.12 準拠）**: `{#each $notes as note (note.filename)}` ブロック内の各カードラッパーに `in:fade`（新規追加）・`out:fade`（削除）・`animate:flip`（残存カード位置移動）を適用。フィルタ変更時は `{#key}` ブロックでアニメーションを抑制し即座に一覧を描画。スクロールロード追記時は新規分のみ `in:fade` が発火 |
 | 3-2 | `SearchBar.svelte` | `src/lib/components/SearchBar.svelte` | 検索クエリ入力 UI。300ms デバウンス（`setTimeout` ベース）後に `filters.ts` の `query` を更新。空文字列で `list_notes` フォールバック |
 | 3-3 | `TagFilter.svelte` | `src/lib/components/TagFilter.svelte` | タグ選択 UI（複数選択、OR 条件）。2 モード切替: デフォルト状態（`tags=[]` かつ `query=""`）→ `listAllTags()` IPC で全タグ取得。フィルタ適用中 → `notes` store から `tags` を集約。タグ選択/解除で `filters.ts` の `tags` を更新 |
 | 3-4 | `DateFilter.svelte` | `src/lib/components/DateFilter.svelte` | 日付範囲選択 UI。`fromDate`/`toDate` を `filters.ts` に反映 |
@@ -208,7 +208,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 | 単体テスト (Rust) | `search.rs` | 部分一致検索が大文字小文字無視で動作。スニペット生成がマッチ箇所前後 50 文字を含む。`HighlightRange` が正しい相対オフセット。マッチング対象 body が ADR-008 body 意味論に従う（閉じフェンス直後の `\n` を含まない） |
 | 単体テスト (Rust) | `list_all_tags` | 全ファイルからタグを集約・重複排除・ソート |
 | 単体テスト (Rust) | `list_notes` (ページネーション) | `offset=0, limit=100` で先頭 100 件返却。`total_count` がフィルタ条件合致全数 |
-| コンポーネントテスト | `Feed.svelte` | フィルタ変更で IPC 再発行。降順レンダリング。二重スクロール領域が生成されない |
+| コンポーネントテスト | `Feed.svelte` | フィルタ変更で IPC 再発行。降順レンダリング。二重スクロール領域が生成されない。フィルタ変更時にアニメーションが抑制される（`{#key}` ブロック動作）。ノート追加時にフェードイン、削除時にフェードアウトが発火 |
 | コンポーネントテスト | `SearchBar.svelte` | 300ms デバウンス後に `filters.query` 更新 |
 | コンポーネントテスト | `TagFilter.svelte` | デフォルト状態で `listAllTags()` 呼び出し。タグ選択で `filters.tags` 更新 |
 | E2E テスト | フィード初期表示 | アプリ起動 → 7 日間分のノートが降順表示。2 秒以内 |
@@ -281,7 +281,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 | # | 成果物 | 詳細 |
 |---|---|---|
 | 6-1 | 結合テスト | 全 IPC コマンドのフロントエンド→バックエンド結合テスト。フィルタ変更 → IPC → ストア更新 → UI 反映の一貫性検証 |
-| 6-2 | E2E テスト（Linux） | `xvfb-run` 仮想ディスプレイ上で実行。テストマトリクス: 新規ノート作成、自動保存、コピー（ViewMode / EditMode）、削除、フィード表示、タグフィルタ、日付フィルタ、全文検索、設定変更、スクロールロード、多数カード表示時の CopyButton / DeleteButton 視認性 |
+| 6-2 | E2E テスト（Linux） | `xvfb-run` 仮想ディスプレイ上で実行。テストマトリクス: 新規ノート作成、自動保存、コピー（ViewMode / EditMode）、削除、フィード表示、タグフィルタ、日付フィルタ、全文検索、設定変更、スクロールロード、多数カード表示時の CopyButton / DeleteButton 視認性、ノート追加・削除時のアニメーション（フェードイン / フェードアウト / FLIP） |
 | 6-3 | E2E テスト（macOS） | ネイティブ実行。同一テストマトリクス |
 | 6-4 | パフォーマンステスト | ショートカット→エディタ表示 ≤ 200ms、全文検索 ≤ 200ms（数十件）、自動保存 ≤ 100ms、コピー ≤ 100ms、CodeMirror 6 初期化 ≤ 65ms、アプリ起動→フィード表示 ≤ 2 秒。`performance.now()` ベースで計測 |
 | 6-5 | Linux ビルド | `.deb`, `.AppImage`, Flatpak |
