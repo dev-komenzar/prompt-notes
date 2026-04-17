@@ -68,9 +68,9 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 | IPC 境界 | フロントエンドからの直接ファイルシステムアクセス禁止。全ファイル操作は Rust バックエンド経由 | Sprint 1 で `tauri-commands.ts` IPC ラッパーと ESLint `no-restricted-imports` ルール（`@tauri-apps/plugin-fs` 禁止）を設定。全スプリントで IPC 経由を強制 |
 | 設定変更 | 設定変更は Rust バックエンド経由で永続化。フロントエンド単独でのファイルパス操作禁止 | Sprint 4 で `set_config` IPC コマンドを唯一の設定変更エントリポイントとして実装。フロントエンドはパス文字列の送信のみ |
 | エディタ | CodeMirror 6 必須、Markdown レンダリング禁止、frontmatter 背景色区別必須、タイトル入力欄禁止 | Sprint 2 で CodeMirror 6 拡張構成（`@codemirror/lang-markdown` + `frontmatterDecoration` ViewPlugin）を実装。禁止拡張の不在を単体テストで検証 |
-| コピー | 1 クリックコピーボタンによる本文全体コピー必須。Web Clipboard API 禁止 | Sprint 2 で `CopyButton.svelte` → `tauri-commands.ts` → `commands/clipboard.rs` → `clipboard-manager` プラグインの IPC フローを実装。ESLint `no-restricted-globals` で `navigator.clipboard` を禁止 |
+| コピー | 1 クリックコピーボタンによる本文全体コピー必須。ViewMode / EditMode の両方で常時利用可能。Web Clipboard API 禁止 | Sprint 2 で `CopyButton.svelte` → `tauri-commands.ts` → `commands/clipboard.rs` → `clipboard-manager` プラグインの IPC フローを実装。`CopyButton` を ViewMode / EditMode の双方で常時マウントし、モード遷移で再マウントしない構造とする。ESLint `no-restricted-globals` で `navigator.clipboard` を禁止 |
 | ショートカット | Cmd+N / Ctrl+N で即座に新規ノート作成・フォーカス移動必須 | Sprint 1 で `tauri-plugin-global-shortcut` による `CmdOrCtrl+N` 登録を実装。Sprint 2 で新規カード生成→CodeMirror 6 フォーカスまでの 200ms 以内完了を E2E テストで検証 |
-| ストレージ | ファイル名 `YYYY-MM-DDTHHMMSS.md` 不変、frontmatter は YAML `tags` のみ、自動保存必須 | Sprint 1 で `file_manager.rs`・`frontmatter.rs` を実装。ファイル名バリデーション正規表現・frontmatter スキーマ・自動保存トリガーを単体テストで検証 |
+| ストレージ | ファイル名 `YYYY-MM-DDTHHMMSS.md` 不変、frontmatter は YAML `tags` のみ、自動保存必須、ADR-008 body 意味論の往復冪等性 | Sprint 1 で `file_manager.rs`・`frontmatter.rs` を実装。ファイル名バリデーション正規表現・frontmatter スキーマ・自動保存トリガーを単体テストで検証。Rust 側 `#[cfg(test)] mod tests` で `parse → reassemble → parse` の往復冪等性を表明 |
 | フィード | デフォルト 7 日間フィルタ、降順表示、タグ/日付フィルタ・全文検索必須 | Sprint 3 で `Feed.svelte`・`SearchBar.svelte`・`TagFilter.svelte`・`DateFilter.svelte` と `storage/search.rs` を実装。フィルタリングロジックは Rust 側で実行 |
 | 保存ディレクトリ | Linux/macOS 別デフォルトパス、設定から変更可能 | Sprint 1 で `config/mod.rs` に `app_data_dir()` ベースのパス解決を実装。Sprint 4 で `SettingsModal.svelte` からのディレクトリ変更フローを実装 |
 | ネットワーク禁止 | AI 呼び出し・クラウド同期はスコープ外で実装禁止 | Sprint 1 で `tauri.conf.json` に CSP `connect-src 'none'` を設定。Cargo.toml に HTTP クレート（`reqwest`, `hyper`）を含めない。package.json に `axios` 等を含めない |
@@ -83,26 +83,29 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 | フロントエンド | Svelte + TypeScript | Svelte 5.x / TypeScript 5.x / Vite 6.x |
 | エディタ | CodeMirror 6 | `@codemirror/view` 6.x |
 | バックエンド | Rust | Edition 2021 |
-| frontmatter パース | `serde_yaml` | 最新安定版 |
+| frontmatter パース（Rust） | `serde_yaml` | 最新安定版 |
+| frontmatter パース（TS テストスタブ） | `js-yaml` | 最新安定版（devDependencies のみ） |
 | ゴミ箱操作 | `trash` クレート | Linux: freedesktop trash spec、macOS: NSFileManager |
 | 日時処理 | `chrono` | 最新安定版 |
+| 単体テストランナー（TS） | `vitest` | 最新安定版（devDependencies のみ） |
+| スタイリング | プレーン CSS + CSS カスタムプロパティ | Tailwind は採用しない。`src/styles/global.css` に `--surface`, `--surface-hover`, `--border`, `--text`, `--accent`, `--success`, `--danger` 等を定義 |
 
 ## 2. Milestones
 
 | Sprint | 主要成果物 | 対象モジュール | 前提 |
 |---|---|---|---|
-| Sprint 1 | Tauri プロジェクト骨格 + Rust バックエンド基盤 | `module:shell`, `module:storage`, `module:settings` | なし |
+| Sprint 1 | Tauri プロジェクト骨格 + Rust バックエンド基盤 + ADR-008 frontmatter 両実装整備 | `module:shell`, `module:storage`, `module:settings` | なし |
 | Sprint 2 | エディタ・クリップボード・自動保存 | `module:editor`, `module:shell` | Sprint 1 |
 | Sprint 3 | フィード表示・フィルタ・全文検索 | `module:feed`, `module:storage` | Sprint 1, 2 |
 | Sprint 4 | 設定画面・ディレクトリ変更・ファイル移動 | `module:settings` | Sprint 1, 3 |
 | Sprint 5 | 削除操作・エラーハンドリング・ウィンドウクローズ保存 | `module:editor`, `module:storage`, `module:shell` | Sprint 1〜4 |
 | Sprint 6 | 結合テスト・E2E テスト・クロスプラットフォームビルド | 全モジュール | Sprint 1〜5 |
 
-## 3. Sprint 詳細
+### Sprint 詳細
 
 #### Sprint 1: Tauri プロジェクト骨格 + Rust バックエンド基盤
 
-**目標:** Tauri v2 アプリケーションの初期化、Rust バックエンドの `storage/` および `config/` モジュールの実装、IPC 境界の確立。
+**目標:** Tauri v2 アプリケーションの初期化、Rust バックエンドの `storage/` および `config/` モジュールの実装、IPC 境界の確立、ADR-008 body 意味論の Rust/TS 両実装の土台整備。
 
 **成果物:**
 
@@ -111,7 +114,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 | 1-1 | Tauri プロジェクト初期化 | `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `package.json` | ウィンドウサイズ 1280×720。capabilities 設定で `fs` プラグインの WebView 直接アクセスを禁止。CSP `connect-src 'none'` でネットワークリクエストをブロック。`Cargo.toml` に `reqwest`/`hyper` を含めない。`package.json` に `axios` 等を含めない |
 | 1-2 | `main.rs` エントリポイント | `src-tauri/src/main.rs` | Tauri Builder にプラグイン（`fs`, `clipboard-manager`, `dialog`, `global-shortcut`）を登録。IPC コマンド（`create_note`, `save_note`, `delete_note`, `force_delete_note`, `read_note`, `list_notes`, `search_notes`, `list_all_tags`, `move_notes`, `get_config`, `set_config`, `copy_to_clipboard`）を登録 |
 | 1-3 | `file_manager.rs` | `src-tauri/src/storage/file_manager.rs` | `generate_filename()`: `chrono::Local::now()` → `YYYY-MM-DDTHHMMSS.md` 形式。同一秒衝突時は 1 秒待機再生成。`validate_filename()`: 正規表現 `^\d{4}-\d{2}-\d{2}T\d{6}\.md$` + パスセパレータ検査 + `canonicalize` で `notes_dir` 配下検証。`write_file()`: 一時ファイル → `rename` のアトミック書き込み。`read_file()`, `delete_file()`: バリデーション後にファイル操作 |
-| 1-4 | `frontmatter.rs` | `src-tauri/src/storage/frontmatter.rs` | `NoteFrontmatter { tags: Vec<String>, extra: HashMap<String, Value> }` を `serde_yaml` でパース/シリアライズ。未知フィールドは `#[serde(flatten)]` で保持。空 frontmatter 高速生成: 固定文字列 `"---\ntags: []\n---\n"` を直接返却 |
+| 1-4 | `frontmatter.rs`（Rust 側 ADR-008 単一所有者） | `src-tauri/src/storage/frontmatter.rs` | `NoteFrontmatter { tags: Vec<String>, extra: HashMap<String, Value> }` を `serde_yaml` でパース/シリアライズ。未知フィールドは `#[serde(flatten)]` で保持。`parse(content: &str) -> ParsedNote { tags, body, extra }`: 閉じフェンス `\n---\n` 検出後、直後の区切り `\n` を frontmatter 側の責務として切り詰めて body 開始位置とする。`reassemble(tags: &[String], body: &str) -> String`: frontmatter（末尾 `\n` 付き）の後に区切り `\n` を 1 つ追加して body を連結し、`---\n<yaml>\n---\n\n<body>` 形式を保証。body 空時は末尾 `\n` を残す。空 frontmatter 高速生成: 固定文字列 `"---\ntags: []\n---\n\n"` を直接返却（ADR-008 の末尾空行 1 行を含む正規レイアウト）。`#[cfg(test)] mod tests` に `parse → reassemble → parse` の往復で `(tags, body)` が一致すること、N 回繰り返しで body 先頭に `\n` が累積しないこと（AC-STOR-06）を検証するテストを配置 |
 | 1-5 | `search.rs` スタブ | `src-tauri/src/storage/search.rs` | `full_scan()` のインターフェース定義と空実装（Sprint 3 で本実装） |
 | 1-6 | `config/mod.rs` | `src-tauri/src/config/mod.rs` | `AppConfig { notes_dir: String }` を `config.json` で永続化。`app_data_dir()` でOS別デフォルトパスを解決（Linux: `~/.local/share/promptnotes/`, macOS: `~/Library/Application Support/promptnotes/`）。`config.json` 不在時はデフォルト値で新規作成。`set_config` 時のディレクトリ検証: `canonicalize` → 存在確認 → `create_dir_all` → 書き込み権限テスト（`.promptnotes_write_test` ファイル作成・削除） |
 | 1-7 | `commands/notes.rs` | `src-tauri/src/commands/notes.rs` | `NoteMetadata`, `ListNotesResult`, `SearchNotesResult`, `SearchResultEntry`, `HighlightRange`, `ListOptions` 構造体定義。`create_note`, `save_note`, `read_note`, `list_notes` の IPC コマンド実装。統一エラー型 `TauriCommandError { code: String, message: String }` |
@@ -123,16 +126,19 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 | 1-13 | グローバルショートカット登録 | `src-tauri/src/main.rs` | `tauri-plugin-global-shortcut` で `CmdOrCtrl+N` を登録し、`new-note` イベントを WebView に emit |
 | 1-14 | Svelte プロジェクト初期化 | `src/`, `svelte.config.js`, `vite.config.ts` | Svelte 5.x + TypeScript 5.x。ルートコンポーネント `App.svelte` のスケルトン |
 | 1-15 | TS 単体テストランナー整備 | `package.json`, `package-lock.json` | `vitest` を devDependencies に追加し、`scripts.test = "vitest run"` を定義。`tests/unit/*.test.ts` が依存する `js-yaml` / `@types/js-yaml` も devDependencies として固定。`direnv exec . npm test` で vitest が起動することをセットアップ完了の判定基準とする |
+| 1-16 | グローバル CSS（CSS カスタムプロパティ） | `src/styles/global.css` | `--surface`, `--surface-hover`, `--border`, `--text`, `--accent`, `--success`, `--danger` 等を定義。Tailwind は導入しない。`CopyButton` / `DeleteButton` / カード枠線等のスタイル基盤として全コンポーネントが参照する |
+| 1-17 | ADR-008 TypeScript スタブ | `tests/unit/frontmatter.ts` | 本番コードではなくテスト専用スタブ。`splitRaw(content: string): { yaml, body }` と `serializeFrontmatter(tags, body): string` を実装し、`parseFrontmatter → serializeFrontmatter → parseFrontmatter` の往復冪等性を検証する基盤を提供。`module:storage` が所有し、Rust 実装との共通仕様からの乖離検出に用いる |
 
 **検証基準:**
 
 | テスト種別 | 対象 | 基準 |
 |---|---|---|
 | 単体テスト (Rust) | `file_manager.rs` | `generate_filename()` がパターン合致するファイル名を生成。`validate_filename()` が不正ファイル名・パストラバーサルを拒否。アトミック書き込みが完了 |
-| 単体テスト (Rust) | `frontmatter.rs` | `tags: [a, b]` のパース・シリアライズが往復一致。未知フィールドが保持される。空 frontmatter 高速生成が `"---\ntags: []\n---\n"` を返却 |
+| 単体テスト (Rust) | `frontmatter.rs` | `tags: [a, b]` のパース・シリアライズが往復一致。未知フィールドが保持される。空 frontmatter 高速生成が `"---\ntags: []\n---\n\n"` を返却。`parse → reassemble → parse` の往復冪等性。N 回繰り返しで body 先頭に `\n` が累積しない（AC-STOR-06）。body 空時に末尾 `\n` が残る |
 | 単体テスト (Rust) | `config/mod.rs` | デフォルトパス生成が OS 別に正しい。`config.json` 不在時の新規作成。無効ディレクトリの拒否 |
 | 単体テスト (Rust) | `commands/notes.rs` | `create_note` がファイルを作成し `NoteMetadata` を返却。`save_note` がファイルを上書き。`list_notes` が降順ソート済み `ListNotesResult` を返却 |
 | 単体テスト (TS) | `timestamp.ts` | ファイル名↔日時変換の正確性 |
+| 単体テスト (TS) | `tests/unit/frontmatter.ts` | `parseFrontmatter → serializeFrontmatter → parseFrontmatter` の往復冪等性。共通仕様との整合性 |
 | テストランナー起動 | `npm test` | `direnv exec . npm test` が exit 0 で完了し vitest が `tests/unit/*.test.ts` を発見・実行する |
 | ESLint チェック | 全フロントエンドファイル | 禁止インポート・禁止グローバルの違反ゼロ |
 
@@ -140,33 +146,36 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 #### Sprint 2: エディタ・クリップボード・自動保存
 
-**目標:** CodeMirror 6 エディタの実装、1 クリックコピー機能、自動保存トリガー、新規ノート作成ショートカットの完全動作。
+**目標:** CodeMirror 6 エディタの実装、ViewMode / EditMode 双方で常時利用可能な 1 クリックコピー機能、自動保存トリガー、新規ノート作成ショートカットの完全動作、ADR-008 body 意味論の TypeScript 本番実装の完成。
 
 **成果物:**
 
 | # | 成果物 | ファイル | 詳細 |
 |---|---|---|---|
-| 2-1 | `NoteEditor.svelte` | `src/lib/components/NoteEditor.svelte` | CodeMirror 6 EditorView のライフサイクル管理（`onMount` で生成、`onDestroy` で `destroy()`）。拡張セット: `@codemirror/lang-markdown` + `@codemirror/language-data`（シンタックスハイライト）、`syntaxHighlighting(defaultHighlightStyle)`、`keymap.of(defaultKeymap)`、`frontmatterDecoration()`（ViewPlugin）、`EditorView.theme()`、`EditorView.lineWrapping`。DOM 構造は `<div class="note-editor"><div bind:this={editorContainer}></div></div>` のみ。タイトル入力欄（`<input>`, `<textarea>`, `<h1>`）は一切なし。Markdown HTML レンダリング / プレビュー拡張は禁止 |
-| 2-2 | `frontmatter-decoration.ts` | `src/lib/components/frontmatter-decoration.ts` | `ViewPlugin` + `Decoration.line` による frontmatter 領域（`---` 〜 `---`）の背景色装飾。CSS クラス `.cm-frontmatter-line` に `background-color: rgba(59, 130, 246, 0.08)` を適用。`docChanged` または `viewportChanged` 時に再計算 |
-| 2-3 | `NoteCard.svelte` | `src/lib/components/NoteCard.svelte` | 2 状態ステートマシン（ViewMode / EditMode）。ViewMode: 本文プレビュー（frontmatter 除去済み）、タグ表示、タイムスタンプ表示、CopyButton、DeleteButton。EditMode: NoteEditor のマウント。自動保存トリガー: カード外クリック・別カード選択時に `saveNote(filename, rawMarkdown)` を呼び出し → ViewMode 遷移。保存失敗時はエディタ維持でエラー表示 |
-| 2-4 | `CopyButton.svelte` | `src/lib/components/CopyButton.svelte` | ViewMode 時のみ表示。`frontmatter.ts` の `extractBody()` で frontmatter 除去済み本文を取得 → `tauri-commands.ts` の `copyToClipboard()` で IPC 経由コピー。成功フィードバック: アイコン「✓」+ `text-green-500`、2,000ms 後に復帰。失敗フィードバック: アイコン「✕」+ `text-red-500`、3,000ms 後に復帰。フィードバック中は `disabled` で連打防止 |
-| 2-5 | `DeleteButton.svelte` | `src/lib/components/DeleteButton.svelte` | `deleteNote()` IPC 呼び出し。`trash` クレートでゴミ箱移動（確認ダイアログなし）。`TRASH_FAILED` エラー時のみ「完全削除」確認ダイアログ表示 → `forceDeleteNote()` |
-| 2-6 | `frontmatter.ts` | `src/lib/utils/frontmatter.ts` | 読み取り専用の軽量パース。`extractBody(rawMarkdown: string): string` — 先頭 `---\n...\n---\n` を正規表現 `/^---\n[\s\S]*?\n---\n/` で除去。`extractTags(rawMarkdown: string): string[]` — frontmatter から tags 配列を抽出（表示用）。書き込み・正規化は禁止（Rust 側 `frontmatter.rs` が正規所有者） |
-| 2-7 | `commands/clipboard.rs` 本実装 | `src-tauri/src/commands/clipboard.rs` | `copy_to_clipboard` コマンド: Tauri `clipboard-manager` プラグインの `clipboard.write_text(text)` を呼び出し。エラー時は `CLIPBOARD_FAILED` コードで `TauriCommandError` を返却 |
-| 2-8 | `Header.svelte` スケルトン | `src/lib/components/Header.svelte` | New ボタン（`new-note` イベント受信時に `createNote()` → フィードに prepend）、⚙️ ボタン（設定モーダル表示）。SearchBar・フィルタは Sprint 3 で接続。アプリ名は表示しない |
-| 2-9 | 新規ノート作成フロー | `Header.svelte` + `Feed.svelte` + `NoteCard.svelte` | `listen("new-note")` → 既存編集中カードの自動保存 → `createNote()` IPC → フィード先頭に新規カード prepend（EditMode）→ CodeMirror 6 フォーカス。合計 200ms 以内 |
+| 2-1 | `NoteEditor.svelte` | `src/lib/components/NoteEditor.svelte` | CodeMirror 6 EditorView のライフサイクル管理（`onMount` で生成、`onDestroy` で `destroy()`）。拡張セット: `@codemirror/lang-markdown` + `@codemirror/language-data`（シンタックスハイライト）、`syntaxHighlighting(defaultHighlightStyle)`、`keymap.of(defaultKeymap)`、`frontmatterDecoration()`（ViewPlugin）、`EditorView.theme()`、`EditorView.lineWrapping`。DOM 構造は `<div class="note-editor"><div bind:this={editorContainer}></div></div>` のみ。タイトル入力欄（`<input>`, `<textarea>`, `<h1>`）は一切なし。Markdown HTML レンダリング / プレビュー拡張は禁止。`getContent(): string` で `EditorView.state.doc.toString()` を公開（CopyButton が編集モードコピー時に利用） |
+| 2-2 | `frontmatter-decoration.ts` | `src/lib/components/frontmatter-decoration.ts` | `ViewPlugin` + `Decoration.line` による frontmatter 領域（`---` 〜 `---`）の背景色装飾。CSS クラス `.cm-frontmatter-line` に `background-color: rgba(59, 130, 246, 0.08)` を適用（固定値、OQ-EDIT-001 確定）。`docChanged` または `viewportChanged` 時に再計算 |
+| 2-3 | `NoteCard.svelte` | `src/lib/components/NoteCard.svelte` | 2 状態ステートマシン（ViewMode / EditMode）。ViewMode: 本文プレビュー（`NoteMetadata.body_preview` / `preview` を直接利用、frontmatter を独自再パースしない）、タグ表示、タイムスタンプ表示。EditMode: NoteEditor のマウント。**CopyButton と DeleteButton は `{#if editing}` / `{:else}` 分岐の外側（モード共通領域）に配置し、モード遷移で再マウントしない**。自動保存トリガー: カード外クリック・別カード選択・Cmd+N 押下時に `NoteEditor.getContent()` → `saveNote(filename, rawMarkdown)` を呼び出し → ViewMode 遷移。保存失敗時はエディタ維持でエラー表示。**レイアウト制約（§4.4b 準拠）**: ルート要素に `flex-shrink: 0`、本文プレビューに `max-height: 120px; overflow: hidden`、フッタに `display: flex` を適用し、フィード内での縦圧縮による CopyButton / DeleteButton のクリップを構造的に防止 |
+| 2-4 | `CopyButton.svelte` | `src/lib/components/CopyButton.svelte` | **ViewMode / EditMode の両方で常時表示**。EditMode では `NoteCard` が保持する `NoteEditor` 参照の `getContent()` で未保存 Doc を取得 → `src/lib/frontmatter.ts` の `extractBody()` で body 抽出 → `copyToClipboard()`。ViewMode では `readNote(filename)` で保存済みファイル内容を取得 → 同じく `extractBody()` → `copyToClipboard()`。編集モードでのコピーは自動保存を誘発せず、EditorView のフォーカス・選択・Undo 履歴を変更しない。**絵文字単体表示は禁止**: ラベル既定 `Copy`、成功時 `✓ Copied`（2,000ms で復帰）、失敗時 `✕ Failed`（3,000ms で復帰）。CSS は `src/styles/global.css` の `--surface` / `--surface-hover` / `--border` / `--text` / `--accent` / `--success` / `--danger` を使用し、`1px solid var(--border)` の枠線と背景で常に視認可能とする。フィードバック中は `disabled` で連打防止 |
+| 2-5 | `DeleteButton.svelte` | `src/lib/components/DeleteButton.svelte` | `NoteCard` のフッタ領域に常時配置（EditMode では `NoteEditor` がカード内を占有するため非表示で良い）。**絵文字単体表示は禁止**: ラベル `Delete`。`deleteNote()` IPC 呼び出し。`trash` クレートでゴミ箱移動（確認ダイアログなし）。`TRASH_FAILED` エラー時のみ「ゴミ箱が利用できません。完全に削除しますか？」確認ダイアログ表示 → `forceDeleteNote()`。CSS は `--surface` / `--surface-hover` / `--border` / `--danger` を使用。IPC 処理中は `disabled` |
+| 2-6 | `frontmatter.ts`（ADR-008 TypeScript 本番実装） | `src/lib/frontmatter.ts` | **編集モードのコピー操作専用**。`extractBody(rawMarkdown: string): string` — 先頭 `---\n...\n---\n` を検出後、直後の区切り `\n` 1 つを body に含めずに本文を返す（ADR-008 body 意味論準拠）。frontmatter がない場合は入力をそのまま返す。`generateNoteContent(tags: string[], body: string): string` — `---\n<yaml>\n---\n\n<body>` 形式を構築。両関数は `tests/unit/frontmatter.test.ts` の往復冪等性・N 回反復・body 空時末尾 `\n` 残存テストで検証される。**IPC レスポンスの再パース用途には使用しない** |
+| 2-7 | ADR-008 往復冪等性テスト | `tests/unit/frontmatter.test.ts` | `generateNoteContent(tags, body) → extractBody(...)` の擬似往復で body が変化しないこと、`parseFrontmatter → serializeFrontmatter → parseFrontmatter`（スタブ経由）の往復で `(tags, body)` が変化しないこと、N 回繰り返しても body 先頭に `\n` が累積しないこと（AC-STOR-06 回帰防止）、body 空時に末尾 `\n` が残ることを検証。Rust 側 `#[cfg(test)] mod tests` とセットで実行する運用規約を README に明記 |
+| 2-8 | `commands/clipboard.rs` 本実装 | `src-tauri/src/commands/clipboard.rs` | `copy_to_clipboard` コマンド: Tauri `clipboard-manager` プラグインの `clipboard.write_text(text)` を呼び出し。エラー時は `CLIPBOARD_FAILED` コードで `TauriCommandError` を返却 |
+| 2-9 | `Header.svelte` スケルトン | `src/lib/components/Header.svelte` | New ボタン（`new-note` イベント受信時に `createNote()` → フィードに prepend）、⚙️ ボタン（設定モーダル表示）。SearchBar・フィルタは Sprint 3 で接続。**アプリ名は表示しない** |
+| 2-10 | 新規ノート作成フロー | `Header.svelte` + `Feed.svelte` + `NoteCard.svelte` | `listen("new-note")` → 既存編集中カードの自動保存 → `createNote()` IPC → フィード先頭に新規カード prepend（EditMode）→ CodeMirror 6 フォーカス。合計 200ms 以内 |
 
 **検証基準:**
 
 | テスト種別 | 対象 | 基準 |
 |---|---|---|
 | 単体テスト (Rust) | `commands/clipboard.rs` | `copy_to_clipboard` がエラーなく完了 |
-| 単体テスト (TS) | `frontmatter.ts` | `extractBody()` が frontmatter を正しく除去。frontmatter なしの入力をそのまま返却 |
-| コンポーネントテスト | `NoteEditor.svelte` | CodeMirror 6 がマウントされ `.cm-editor` 要素が存在。タイトル入力欄（`<input>`, `<textarea>`）が存在しない。frontmatter 行に `.cm-frontmatter-line` クラスが適用 |
-| コンポーネントテスト | `CopyButton.svelte` | クリック後にアイコンが「✓」に変化し 2,000ms 後に復帰 |
-| E2E テスト | 新規ノート作成 | Cmd+N / Ctrl+N → エディタフォーカスまで 200ms 以内。作成されたファイルが `YYYY-MM-DDTHHMMSS.md` 形式 |
+| 単体テスト (TS) | `src/lib/frontmatter.ts` | `extractBody()` が frontmatter と直後の区切り `\n` を除去。frontmatter なしの入力をそのまま返却。`generateNoteContent()` が `---\n<yaml>\n---\n\n<body>` レイアウトを生成。往復冪等性・N 回反復・body 空時末尾 `\n` 残存テストが PASS |
+| コンポーネントテスト | `NoteEditor.svelte` | CodeMirror 6 がマウントされ `.cm-editor` 要素が存在。タイトル入力欄（`<input>`, `<textarea>`, `<h1>`）が存在しない。frontmatter 行に `.cm-frontmatter-line` クラスが適用 |
+| コンポーネントテスト | `CopyButton.svelte` | ViewMode / EditMode の両方でマウントされていること（DOM に常時存在）。クリック後にラベルが `✓ Copied` に変化し 2,000ms 後に `Copy` へ復帰。bounding box の幅・高さがいずれも 0 でない。親 (`NoteCard` / `Feed`) の `overflow` 制約でクリップされない（AC-EDIT-06 / 06b 準拠）。`elementFromPoint()` でボタン要素が取得できる（被覆されていない）。絵文字単体表示がない |
+| コンポーネントテスト | `DeleteButton.svelte` | ViewMode でマウントされ、bounding box の幅・高さがいずれも 0 でない。`elementFromPoint()` で取得可能（AC-EDIT-07 準拠）。ラベル `Delete` がテキストとして存在 |
+| E2E テスト | 新規ノート作成 | Cmd+N / Ctrl+N → エディタフォーカスまで 200ms 以内。作成されたファイルが `YYYY-MM-DDTHHMMSS.md` 形式で内容が `"---\ntags: []\n---\n\n"` |
 | E2E テスト | 自動保存 | カード外クリック → ファイル内容が永続化。100ms 以内完了 |
-| E2E テスト | コピー | CopyButton クリック → クリップボード内容が frontmatter 除去済み本文と一致。100ms 以内完了 |
+| E2E テスト | コピー（ViewMode） | CopyButton クリック → クリップボード内容が frontmatter 除去済み本文と一致。100ms 以内完了 |
+| E2E テスト | コピー（EditMode） | 編集モード中の CopyButton クリック → 未保存 Doc から抽出された body がコピーされる。自動保存が誘発されない。EditorView のフォーカス・選択状態が維持される |
 
 ---
 
@@ -178,7 +187,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 | # | 成果物 | ファイル | 詳細 |
 |---|---|---|---|
-| 3-1 | `Feed.svelte` | `src/lib/components/Feed.svelte` | `filters` store の reactive 監視 → `query` 空: `listNotes()` / `query` 非空: `searchNotes()` を自動発行。結果を `notes` store・`searchResults` store・`totalCount` store に反映。カード一覧を降順レンダリング。編集状態調停: `editingFilename: string | null` で同時編集カード最大 1 つを強制。スクロール末尾到達で `loadNextPage()`（`offset += 100`）。`totalCount` 超過時は追加取得しない |
+| 3-1 | `Feed.svelte` | `src/lib/components/Feed.svelte` | `filters` store の reactive 監視 → `query` 空: `listNotes()` / `query` 非空: `searchNotes()` を自動発行。結果を `notes` store・`searchResults` store・`totalCount` store に反映。カード一覧を降順レンダリング。編集状態調停: `editingFilename: string | null` で同時編集カード最大 1 つを強制。スクロール末尾到達で `loadNextPage()`（`offset += 100`）。`totalCount` 超過時は追加取得しない。**レイアウト制約（§4.4b 準拠）**: ルートが `display: flex; flex-direction: column; overflow-y: auto` の単一スクロール領域として振る舞い、子カードに二重スクロールを作らない |
 | 3-2 | `SearchBar.svelte` | `src/lib/components/SearchBar.svelte` | 検索クエリ入力 UI。300ms デバウンス（`setTimeout` ベース）後に `filters.ts` の `query` を更新。空文字列で `list_notes` フォールバック |
 | 3-3 | `TagFilter.svelte` | `src/lib/components/TagFilter.svelte` | タグ選択 UI（複数選択、OR 条件）。2 モード切替: デフォルト状態（`tags=[]` かつ `query=""`）→ `listAllTags()` IPC で全タグ取得。フィルタ適用中 → `notes` store から `tags` を集約。タグ選択/解除で `filters.ts` の `tags` を更新 |
 | 3-4 | `DateFilter.svelte` | `src/lib/components/DateFilter.svelte` | 日付範囲選択 UI。`fromDate`/`toDate` を `filters.ts` に反映 |
@@ -186,7 +195,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 | 3-6 | `notes.ts` | `src/lib/stores/notes.ts` | `Writable<NoteMetadata[]>`。`list_notes` / `search_notes` レスポンス受信時、`create_note` / `delete_note` 成功時に更新 |
 | 3-7 | `searchResults.ts` | `src/lib/stores/searchResults.ts` | `Writable<SearchResultEntry[] | null>`。`search_notes` 時に `SearchResultEntry[]` を設定。`list_notes` フォールバック時に `null` にリセット |
 | 3-8 | `totalCount.ts` | `src/lib/stores/totalCount.ts` | `Writable<number>`。`list_notes` / `search_notes` レスポンスの `total_count` で更新。スクロールロード次ページ判定に使用 |
-| 3-9 | `search.rs` 本実装 | `src-tauri/src/storage/search.rs` | `full_scan()`: `notes_dir` 全 `.md` ファイル走査。処理順序: ファイル名日付フィルタ → `read_to_string` → `frontmatter.rs` でタグ抽出 → タグ OR フィルタ → 本文 + frontmatter で `query` 部分一致検索（大文字小文字無視、`str::to_lowercase().contains()`）→ スニペット生成（マッチ箇所前後各 50 文字、単語境界拡張）→ `HighlightRange` 算出（スニペット内相対オフセット）→ `created_at` 降順ソート → `total_count` 記録後 `offset`/`limit` でスライス |
+| 3-9 | `search.rs` 本実装 | `src-tauri/src/storage/search.rs` | `full_scan()`: `notes_dir` 全 `.md` ファイル走査。処理順序: ファイル名日付フィルタ → `read_to_string` → `frontmatter.rs` の `parse` でタグと body を抽出（ADR-008 body 意味論準拠） → タグ OR フィルタ → 本文 + frontmatter で `query` 部分一致検索（大文字小文字無視、`str::to_lowercase().contains()`）→ スニペット生成（マッチ箇所前後各 50 文字、単語境界拡張）→ `HighlightRange` 算出（スニペット内相対オフセット）→ `created_at` 降順ソート → `total_count` 記録後 `offset`/`limit` でスライス |
 | 3-10 | `list_all_tags` コマンド | `src-tauri/src/commands/notes.rs` | `notes_dir` 全 `.md` ファイルの frontmatter `tags` を集約。重複排除・アルファベット順ソートして `Vec<String>` を返却 |
 | 3-11 | `list_notes` ページネーション拡張 | `src-tauri/src/commands/notes.rs` | `list_notes` コマンドに `limit`（デフォルト 100）・`offset`（デフォルト 0）パラメータを追加。レスポンスを `ListNotesResult { notes, total_count }` に変更 |
 | 3-12 | `Header.svelte` 完成 | `src/lib/components/Header.svelte` | Sprint 2 のスケルトンに SearchBar、TagFilter、DateFilter を統合。アプリ名は表示しない |
@@ -196,16 +205,17 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 | テスト種別 | 対象 | 基準 |
 |---|---|---|
-| 単体テスト (Rust) | `search.rs` | 部分一致検索が大文字小文字無視で動作。スニペット生成がマッチ箇所前後 50 文字を含む。`HighlightRange` が正しい相対オフセット |
+| 単体テスト (Rust) | `search.rs` | 部分一致検索が大文字小文字無視で動作。スニペット生成がマッチ箇所前後 50 文字を含む。`HighlightRange` が正しい相対オフセット。マッチング対象 body が ADR-008 body 意味論に従う（閉じフェンス直後の `\n` を含まない） |
 | 単体テスト (Rust) | `list_all_tags` | 全ファイルからタグを集約・重複排除・ソート |
 | 単体テスト (Rust) | `list_notes` (ページネーション) | `offset=0, limit=100` で先頭 100 件返却。`total_count` がフィルタ条件合致全数 |
-| コンポーネントテスト | `Feed.svelte` | フィルタ変更で IPC 再発行。降順レンダリング |
+| コンポーネントテスト | `Feed.svelte` | フィルタ変更で IPC 再発行。降順レンダリング。二重スクロール領域が生成されない |
 | コンポーネントテスト | `SearchBar.svelte` | 300ms デバウンス後に `filters.query` 更新 |
 | コンポーネントテスト | `TagFilter.svelte` | デフォルト状態で `listAllTags()` 呼び出し。タグ選択で `filters.tags` 更新 |
 | E2E テスト | フィード初期表示 | アプリ起動 → 7 日間分のノートが降順表示。2 秒以内 |
 | E2E テスト | 全文検索 | クエリ入力 → マッチ結果表示 + スニペット + ハイライト。200ms 以内（数十件規模） |
 | E2E テスト | タグフィルタ | タグ選択 → OR 条件でフィルタ適用。200ms 以内 |
 | E2E テスト | スクロールロード | 100 件超のノート → スクロール末尾到達で次ページ追加 |
+| E2E テスト | 多数カード表示時の視認性 | 多数カードが縦に並んでもすべてのカードで CopyButton / DeleteButton の bounding box が 0 でなく、親 `overflow` でクリップされない（§4.4b 準拠） |
 
 ---
 
@@ -244,7 +254,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 |---|---|---|---|
 | 5-1 | `delete_note` + `trash` 連携 | `src-tauri/src/commands/notes.rs`, `storage/file_manager.rs` | `trash::delete()` でゴミ箱移動（確認ダイアログなし）。失敗時は `TRASH_FAILED` エラー返却 |
 | 5-2 | `force_delete_note` | `src-tauri/src/commands/notes.rs` | `std::fs::remove_file()` による完全削除。`TRASH_FAILED` 後のフォールバック用 |
-| 5-3 | フロントエンドエラーハンドリング | `tauri-commands.ts`, 各コンポーネント | `TauriCommandError` の `code` で分岐。`STORAGE_NOT_FOUND` → カードをフィードから除去。`STORAGE_WRITE_FAILED` → エラー表示。`CONFIG_INVALID_DIR` → 設定画面誘導。`TRASH_FAILED` → 完全削除確認ダイアログ。`CLIPBOARD_FAILED` → コピー失敗フィードバック。エラー `message` はコンソールに出力 |
+| 5-3 | フロントエンドエラーハンドリング | `tauri-commands.ts`, 各コンポーネント | `TauriCommandError` の `code` で分岐。`STORAGE_NOT_FOUND` → カードをフィードから除去。`STORAGE_WRITE_FAILED` → エラー表示。`STORAGE_FRONTMATTER_PARSE` → 該当ノートのタグ・スニペットを空として扱いフィード表示は継続。`CONFIG_INVALID_DIR` → 設定画面誘導。`TRASH_FAILED` → 完全削除確認ダイアログ。`CLIPBOARD_FAILED` → コピー失敗フィードバック。エラー `message` はコンソールに出力 |
 | 5-4 | ウィンドウクローズ時の自動保存 | `main.rs`, `App.svelte` | Tauri `close-requested` イベントをフック → `before-close` イベントを WebView に emit → フロントエンドが編集中コンテンツを `saveNote()` → 保存完了後にクローズ許可 |
 | 5-5 | 新規ノート作成デバウンス | `Header.svelte` | Cmd+N 連打対策: 500ms デバウンスで `createNote()` の重複呼び出しを防止 |
 | 5-6 | ディレクトリ不在時のフォールバック | `config/mod.rs` | `notes_dir` が起動時に無効（削除済み等）の場合、デフォルトパスにフォールバック + 警告ログ出力 |
@@ -271,12 +281,12 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 | # | 成果物 | 詳細 |
 |---|---|---|
 | 6-1 | 結合テスト | 全 IPC コマンドのフロントエンド→バックエンド結合テスト。フィルタ変更 → IPC → ストア更新 → UI 反映の一貫性検証 |
-| 6-2 | E2E テスト（Linux） | `xvfb-run` 仮想ディスプレイ上で実行。テストマトリクス: 新規ノート作成、自動保存、コピー、削除、フィード表示、タグフィルタ、日付フィルタ、全文検索、設定変更、スクロールロード |
+| 6-2 | E2E テスト（Linux） | `xvfb-run` 仮想ディスプレイ上で実行。テストマトリクス: 新規ノート作成、自動保存、コピー（ViewMode / EditMode）、削除、フィード表示、タグフィルタ、日付フィルタ、全文検索、設定変更、スクロールロード、多数カード表示時の CopyButton / DeleteButton 視認性 |
 | 6-3 | E2E テスト（macOS） | ネイティブ実行。同一テストマトリクス |
 | 6-4 | パフォーマンステスト | ショートカット→エディタ表示 ≤ 200ms、全文検索 ≤ 200ms（数十件）、自動保存 ≤ 100ms、コピー ≤ 100ms、CodeMirror 6 初期化 ≤ 65ms、アプリ起動→フィード表示 ≤ 2 秒。`performance.now()` ベースで計測 |
 | 6-5 | Linux ビルド | `.deb`, `.AppImage`, Flatpak |
 | 6-6 | macOS ビルド | `.dmg`, Homebrew Cask |
-| 6-7 | CI パイプライン | GitHub Actions。マトリクス: `ubuntu-latest` + `macos-latest`。ステップ: lint → 単体テスト → ビルド → E2E テスト。Windows は対象外 |
+| 6-7 | CI パイプライン | GitHub Actions。マトリクス: `ubuntu-latest` + `macos-latest`。ステップ: lint → 単体テスト（Rust `cargo test` + TS `npm test` の両方）→ ビルド → E2E テスト。Windows は対象外。ADR-008 両実装テスト（Rust `#[cfg(test)]` + `tests/unit/frontmatter.test.ts`）の並列実行を必須化し、片側のみ PASS の場合は CI を失敗扱い |
 | 6-8 | セキュリティ検証 | `tauri.conf.json` の capabilities に `fs` WebView アクセスが含まれないこと。CSP `connect-src 'none'` の設定確認。`Cargo.toml` に HTTP クレート不在。ESLint 違反ゼロ |
 
 **検証基準:**
@@ -289,7 +299,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 | パフォーマンステスト | 6 指標 | 全閾値クリア |
 | ビルド検証 | Linux / macOS | バイナリが正常起動し、基本操作が動作 |
 
-## 4. Risks
+## 3. Risks
 
 | # | リスク | 影響度 | 発生確率 | 対策 |
 |---|---|---|---|---|
@@ -301,5 +311,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 | R-06 | `serde_yaml` のシリアライズ出力でフィールド順序が変動し、ユーザーの手動編集した frontmatter のフィールド配置が変わる | 低 | 高 | `tags` フィールドが先頭出力されることのみ保証。未知フィールドは `#[serde(flatten)]` で保持するが順序は `serde_yaml` のデフォルト動作に委ねる。ユーザー影響は軽微（メタデータは `tags` のみが正式フィールド） |
 | R-07 | Tauri v2 の `global-shortcut` プラグインが特定 Linux デスクトップ環境（Wayland）でショートカットを捕捉できない | 中 | 中 | Sprint 6 の E2E テストで Wayland 環境（`GDK_BACKEND=wayland`）での動作を検証。非対応の場合は New ボタンのみを代替操作として提供（ショートカット自体は必須要件だが UI ボタンも並行提供済み） |
 | R-08 | クロスプラットフォームビルドで macOS のコード署名・公証が CI で失敗 | 中 | 中 | Sprint 6 で Apple Developer Certificate の CI シークレット設定。Homebrew Cask 配布時は `--no-quarantine` インストールガイドを提供。初回リリースでは署名なしバイナリ + Gatekeeper 回避手順をドキュメント化 |
-| R-09 | `frontmatter.ts`（フロントエンド読み取り専用パース）と `frontmatter.rs`（Rust 正規パーサー）の動作乖離 | 低 | 中 | フロントエンドの `frontmatter.ts` は表示用の近似値パースのみ。正式データは `list_notes` / `read_note` IPC レスポンスに含まれるパース済み構造化データを使用。コピー操作の本文抽出は `extractBody()` の先頭 `---` ブロック除去のみで十分単純であり乖離リスクは低い |
+| R-09 | `src/lib/frontmatter.ts`（TS 本番実装）と `storage/frontmatter.rs`（Rust 本番実装）の ADR-008 body 意味論からのドリフト | 高 | 中 | 両実装の doc コメントに ADR-008 へのリンクを記載し単一信頼源化。Sprint 1 の Rust `#[cfg(test)] mod tests` と Sprint 2 の `tests/unit/frontmatter.test.ts` で往復冪等性・N 回反復・body 空時末尾 `\n` 残存を両実装横断で検証。Sprint 6 の CI で両テストの並列実行を必須化し、片側のみ PASS の場合は CI 失敗扱い。運用規約として Rust/TS いずれかの変更時は両方のテストを再実行する |
 | R-10 | シンボリックリンク経由のファイルが `canonicalize` で `notes_dir` 外と判定され除外される | 低 | 低 | シンボリックリンク先が `notes_dir` 外の場合は意図的に除外する設計。シンボリックリンク先がディレクトリの場合は再帰走査しない。ドキュメントでシンボリックリンクの制限事項を明記 |
+| R-11 | フィード内でカードが flex 縮小され CopyButton / DeleteButton がクリップされる（AC-EDIT-06 / 06b / 07 違反） | 高 | 中 | Sprint 2 の `NoteCard.svelte` / `Feed.svelte` 実装で §4.4b のレイアウト制約（`flex-shrink: 0`、本文プレビューの `max-height: 120px; overflow: hidden`、フッタの `display: flex`、フィードルートの単一スクロール領域）を必須化。Sprint 3 の E2E テストで多数カード表示時のボタン bounding box 非ゼロ・`elementFromPoint()` 取得可能性を検証 |
+| R-12 | CopyButton / DeleteButton の絵文字単体表示によりフォント依存で不可視化するリスク | 中 | 中 | Sprint 2 の実装でラベルをテキスト（`Copy` / `Delete` / `✓ Copied` / `✕ Failed`）と枠線（`1px solid var(--border)`）で常に視認可能とし、絵文字単体表示を禁止。コンポーネントテストでラベルテキストの存在と bounding box 非ゼロを検証 |

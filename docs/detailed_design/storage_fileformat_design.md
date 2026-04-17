@@ -218,19 +218,19 @@ sequenceDiagram
     CMD->>FMGR: validate_filename(filename)
     FMGR-->>CMD: Ok (正規表現合致 + パストラバーサル検証)
 
-    CMD->>FM: parse_frontmatter(rawMarkdown)
-    FM->>FM: YAML デリミタ検出<br/>tags フィールド抽出<br/>未知フィールド保持
-    FM-->>CMD: FrontmatterResult { tags, body, raw_frontmatter }
+    CMD->>FM: parse(rawMarkdown)
+    FM->>FM: YAML デリミタ検出<br/>tags フィールド抽出<br/>ADR-008 body 境界適用<br/>未知フィールド保持
+    FM-->>CMD: ParsedNote { tags, body, extra }
 
-    CMD->>FM: serialize_frontmatter(tags)
-    FM-->>CMD: normalized YAML string
+    CMD->>FM: reassemble(tags, body)
+    FM-->>CMD: normalized content<br/>"---\n<yaml>\n---\n\n<body>"
 
     CMD->>FMGR: write_file(filename, normalized_content)
     FMGR->>FMGR: resolve_path(notes_dir, filename)<br/>canonicalize で notes_dir 配下を検証
     FMGR->>FS: std::fs::write(full_path, content)
     FS-->>FMGR: Ok
     FMGR-->>CMD: Ok
-    CMD-->>TC: { success: true }
+    CMD-->>TC: NoteMetadata { filename, path, created_at, tags, body_preview }
     TC-->>NC: 保存完了
 
     Note over NC,FS: 全体 ≤ 100ms
@@ -239,8 +239,8 @@ sequenceDiagram
 このシーケンスは自動保存の完全なデータフローを示す。フロントエンドから受け取った生の Markdown テキストは、Rust バックエンドで以下の処理を経て永続化される。
 
 1. **ファイル名バリデーション**: `file_manager.rs` が正規表現 `^\d{4}-\d{2}-\d{2}T\d{6}\.md$` との合致を検証し、パストラバーサル攻撃を防止する。
-2. **frontmatter パース**: `frontmatter.rs` が YAML デリミタを検出し、`tags` フィールドを抽出する。
-3. **frontmatter 正規化**: `frontmatter.rs` が `tags` 配列を正規化された YAML 形式に再シリアライズする。これにより、フロントエンドで手動編集された不正な YAML がクリーンアップされる。
+2. **frontmatter パース**: `frontmatter.rs` が YAML デリミタを検出し、`tags` フィールドと body を ADR-008 の body 境界定義に従って抽出する。
+3. **frontmatter 正規化**: `frontmatter.rs` が `tags` 配列と body を `reassemble` で再組み立てし、`---\n<yaml>\n---\n\n<body>` の正規形に揃える。これにより、フロントエンドで手動編集された不正な YAML や空行過多がクリーンアップされる。
 4. **ファイル書き込み**: `file_manager.rs` がパスを `canonicalize` した上で `notes_dir` 配下であることを確認し、ファイルに書き込む。
 
 100ms 以内の完了目標を達成するため、すべての処理は同期的に実行される。非同期 I/O のオーバーヘッドは回避する。
@@ -252,7 +252,7 @@ sequenceDiagram
 | ファイル | 所有モジュール | 単一責務 | 再実装禁止範囲 |
 |---|---|---|---|
 | `src-tauri/src/storage/file_manager.rs` | `module:storage` | ファイル CRUD（作成・読み取り・上書き・削除）、ファイル名生成、ファイル名バリデーション、パストラバーサル防止 | 他のモジュール（`commands/`, `config/`）が `std::fs` を直接呼び出してノートファイルを操作することを禁止 |
-| `src-tauri/src/storage/frontmatter.rs` | `module:storage` | YAML frontmatter のパース・シリアライズ・正規化。frontmatter スキーマの単一信頼源 | フロントエンド `frontmatter.ts` は読み取り専用の軽量パースのみ。書き込み時の frontmatter 組み立ては Rust 側のみが実行 |
+| `src-tauri/src/storage/frontmatter.rs` | `module:storage` | YAML frontmatter のパース・シリアライズ・正規化、ADR-008 body 意味論の Rust 側単一所有（`parse` / `reassemble` の往復冪等性保証）。frontmatter スキーマの単一信頼源 | フロントエンド `src/lib/frontmatter.ts` は編集モードコピー時の body 抽出用途に限定。ファイル I/O を伴う frontmatter の組み立ては Rust 側のみが実行 |
 | `src-tauri/src/storage/search.rs` | `module:feed` | 全文検索ロジック（ファイル全走査）。`file_manager.rs` と `frontmatter.rs` を利用する | 検索のためのファイル読み取りは `search.rs` 経由。`commands/notes.rs` が直接ファイルを走査しない |
 
 ### 3.2 ファイル名フォーマットの所有権
@@ -274,9 +274,10 @@ frontmatter のスキーマ定義と正規化ロジックは `storage/frontmatte
 | 操作 | 所有者 | 備考 |
 |---|---|---|
 | スキーマ定義（`tags` フィールドのみ） | `storage/frontmatter.rs` | 追加フィールドの導入は要件変更を必要とし、このファイルの変更がトリガーとなる |
-| パース（YAML → Rust 構造体） | `storage/frontmatter.rs` | `serde_yaml` クレートを使用 |
-| シリアライズ（Rust 構造体 → YAML 文字列） | `storage/frontmatter.rs` | 正規化された出力を保証 |
-| 表示用軽量パース（フロントエンド） | `src/lib/utils/frontmatter.ts` | 読み取り専用。書き込みパスでの使用禁止 |
+| パース（YAML → Rust 構造体） | `storage/frontmatter.rs` | `serde_yaml` クレートを使用。ADR-008 body 意味論（閉じフェンス `---\n` 直後の区切り `\n` を body に含めない）を Rust 側で単一所有 |
+| シリアライズ・再組み立て（Rust 構造体 → YAML 文字列 + body 連結） | `storage/frontmatter.rs` | 正規化された出力 `---\n<yaml>\n---\n\n<body>` を保証。`#[cfg(test)] mod tests` で往復冪等性を表明 |
+| 編集モードコピー時の body 抽出（TypeScript 本番実装） | `src/lib/frontmatter.ts`（`module:editor`） | CodeMirror 6 の未保存テキストから body を抽出する用途に限定。ADR-008 body 意味論を Rust 側と共通仕様として採用。IPC レスポンスの再パースには使用しない |
+| ADR-008 共通仕様の検証（TypeScript スタブ） | `tests/unit/frontmatter.ts`（`module:storage` が所有） | `tests/unit/frontmatter.test.ts` から参照され、Rust 実装と TS 実装の共通仕様（往復冪等性）を検証 |
 
 ### 3.4 ディレクトリパス管理の所有権
 
@@ -313,9 +314,9 @@ frontmatter のスキーマ定義と正規化ロジックは `storage/frontmatte
 
 | ステップ | 検証内容 | 失敗時のエラー |
 |---|---|---|
-| 1. 正規表現チェック | `^\d{4}-\d{2}-\d{2}T\d{6}\.md$` に合致 | `InvalidFilename` |
-| 2. パスセパレータ検査 | `/` および `\` が含まれないこと | `PathTraversalAttempt` |
-| 3. パス正規化検証 | `canonicalize(notes_dir.join(filename))` が `notes_dir` 配下であること | `PathTraversalAttempt` |
+| 1. 正規表現チェック | `^\d{4}-\d{2}-\d{2}T\d{6}\.md$` に合致 | `STORAGE_INVALID_FILENAME` |
+| 2. パスセパレータ検査 | `/` および `\` が含まれないこと | `STORAGE_PATH_TRAVERSAL` |
+| 3. パス正規化検証 | `canonicalize(notes_dir.join(filename))` が `notes_dir` 配下であること | `STORAGE_PATH_TRAVERSAL` |
 
 バリデーション関数は `pub fn validate_filename(filename: &str, notes_dir: &Path) -> Result<PathBuf, StorageError>` として公開され、`commands/notes.rs` が呼び出す。バリデーションロジックを `commands/` 層に分散させることは禁止する。
 
@@ -333,20 +334,22 @@ pub struct NoteFrontmatter {
 }
 ```
 
-**パース処理:**
+**パース処理（`parse`）:**
 
 1. ファイル内容の先頭から YAML デリミタ `---` のペアを検出
 2. デリミタ間の内容を `serde_yaml::from_str::<NoteFrontmatter>()` でデシリアライズ
-3. デリミタが見つからない場合はデフォルト値（`tags: []`）を返却
+3. デリミタが見つからない場合はデフォルト値（`tags: []`）を返却し、内容全体を body として扱う
 4. YAML パースエラー時はデフォルト値を返却し、本文は全体をそのまま保持
+5. 閉じフェンス `\n---\n` 検出後、直後の区切り `\n` を frontmatter 側の責務として切り詰めた位置を body 開始点とする（ADR-008）
 
-**シリアライズ処理:**
+**シリアライズ処理（`reassemble`）:**
 
 1. `NoteFrontmatter` を `serde_yaml::to_string()` でシリアライズ
 2. 出力形式は YAML flow style（`tags: [meeting, design]`）をデフォルトとし、3 要素以下の場合にインライン表記を使用
 3. 未知フィールド（`extra`）はシリアライズ時にも保持する。ユーザーが手動で追加したフィールドを破壊しないため
+4. frontmatter ブロック末尾 `---\n` の後に区切り `\n` を 1 つ追加し、body を連結（ADR-008 の正規化レイアウト `---\n<yaml>\n---\n\n<body>`）
 
-**空 frontmatter の高速生成:** `create_note` 時は `serde_yaml` を経由せず、固定文字列 `"---\ntags: []\n---\n"` を直接出力する。200ms 以内のノート作成目標を達成するためのファストパスである。
+**空 frontmatter の高速生成:** `create_note` 時は `serde_yaml` を経由せず、固定文字列 `"---\ntags: []\n---\n\n"` を直接出力する。200ms 以内のノート作成目標を達成するためのファストパスである。body 空時の末尾空行 1 つは ADR-008 の body 意味論に準拠する。
 
 **body 意味論（ADR-008 準拠）:** frontmatter と body の境界は以下のとおり厳密に定義される。
 
@@ -363,8 +366,9 @@ pub struct NoteFrontmatter {
   assert_eq!(p0.body, p1.body); // "Hello" == "Hello"
   assert_eq!(c0, c1);            // 冪等
   ```
+- **N 回繰り返し不変条件（AC-STOR-06）**: `reassemble` を N 回繰り返し適用しても body 先頭に改行 `\n` が累積しないこと。Rust 側 `#[cfg(test)] mod tests` および TypeScript 側 `tests/unit/frontmatter.test.ts` の両方で検証する。
 
-この仕様は ADR-008 で確定した body 意味論の単一信頼源である。フロントエンド側の表示用軽量パース (`src/lib/frontmatter.ts`) も同一の body 意味論に従う（`docs/detailed_design/editor_clipboard_design.md` §3.3 参照）。
+この仕様は ADR-008 で確定した body 意味論の単一信頼源である。Rust 側 `storage/frontmatter.rs` がファイル I/O 経路を排他所有し、フロントエンド側の編集モードコピー時の body 抽出 (`src/lib/frontmatter.ts` の `extractBody` / `generateNoteContent`) も同一の body 意味論に従う（`docs/detailed_design/editor_clipboard_design.md` §3.3 および `detail:component_architecture` §4.11 参照）。Rust/TS 両実装のいずれかを変更した場合は両方のテストを必ず再実行する運用規約を設ける。
 
 ### 4.4 自動保存トリガーの実装
 
@@ -378,7 +382,7 @@ pub struct NoteFrontmatter {
 
 すべてのトリガーにおいて、保存処理は `tauri-commands.ts` の `saveNote()` 関数を経由し、Rust バックエンドの `save_note` コマンドで実行される。保存完了閾値は 100ms 以内である。
 
-**保存内容の構成:** フロントエンドは CodeMirror 6 エディタから取得した生の Markdown テキスト（frontmatter 含む）をそのまま Rust に送信する。フロントエンド側で frontmatter を分離・再構成する処理は行わない。Rust 側の `frontmatter.rs` が受信した内容をパースし、frontmatter 部分を正規化した上でファイルに書き込む。
+**保存内容の構成:** フロントエンドは CodeMirror 6 エディタから取得した生の Markdown テキスト（frontmatter 含む）をそのまま Rust に送信する。フロントエンド側で frontmatter を分離・再構成する処理は行わない（編集モードコピー時の body 抽出は例外で、`src/lib/frontmatter.ts` が担当する）。Rust 側の `frontmatter.rs` が受信した内容を `parse` してタグと body を取り出し、`reassemble` で正規化した上でファイルに書き込む。IPC レスポンス `NoteMetadata` にはパース済みの `tags` と `body_preview` が含まれ、フロントエンドはそれらをそのまま表示モードに反映する。
 
 ### 4.5 config.json のスキーマと永続化
 
@@ -405,21 +409,22 @@ pub struct NoteFrontmatter {
 5. バリデーション通過後、`config.json` に新しいパスを書き込み
 6. `file_manager.rs` の `notes_dir` を更新し、以降のファイル操作で新ディレクトリを使用
 
-旧ディレクトリのファイルは移動しない。新ディレクトリ内の既存 `.md` ファイルを読み込む方針である（Component Architecture OQ-ARCH-004 準拠）。
+旧ディレクトリのファイル移動はユーザーに確認ダイアログ「ノートを新しいディレクトリに移動しますか？」を提示し、「移動する」選択時は `move_notes` IPC コマンドで旧ディレクトリの `.md` ファイルを新ディレクトリに移動する（同名ファイルはスキップし上書きしない）。「移動しない」選択時は新ディレクトリ内の既存 `.md` ファイルを `list_notes` で読み込む（Component Architecture OQ-ARCH-004 準拠、§4.2 参照）。
 
 ### 4.6 ファイル一覧取得と日付フィルタの実装
 
 `file_manager.rs` の `list_files()` 関数は `notes_dir` 内の `.md` ファイルを走査し、ファイル名から日付情報を抽出する。
 
 ```
-入力: ListOptions { from_date: Option<String>, to_date: Option<String>, tags: Option<Vec<String>> }
-出力: Vec<NoteMetadata>
+入力: ListOptions { from_date: Option<String>, to_date: Option<String>, tags: Option<Vec<String>>, limit: u32, offset: u32 }
+出力: ListNotesResult { notes: Vec<NoteMetadata>, total_count: u32 }
 ```
 
 - ファイル名のパースで日付範囲フィルタを適用（ファイル名が日時を含むため、ファイルを開かずにフィルタ可能）
-- タグフィルタが指定されている場合のみ、各ファイルの frontmatter をパースしてタグを照合
+- タグフィルタが指定されている場合のみ、各ファイルの frontmatter をパースしてタグを照合（複数タグは OR 条件）
 - 結果は降順（新しいノートが先頭）でソート
 - デフォルトのフィルタ範囲は過去 7 日間
+- `total_count` を記録後に `offset` / `limit` でスライスし、ページネーション（スクロールロード）の次ページ有無判定に使用
 
 ### 4.7 NoteMetadata 構造体の定義
 
@@ -439,27 +444,38 @@ pub struct NoteFrontmatter {
 
 | 操作 | 閾値 | 実装方針 |
 |---|---|---|
-| ノート作成（ショートカット → ファイル書き込み完了） | 200ms 以内（IPC + ファイル I/O） | 固定文字列 frontmatter の同期書き込み |
-| 自動保存（カード外クリック → ファイル書き込み完了） | 100ms 以内 | frontmatter パース → 正規化 → 同期書き込み |
+| ノート作成（ショートカット → ファイル書き込み完了） | 200ms 以内（IPC + ファイル I/O） | 固定文字列 frontmatter `"---\ntags: []\n---\n\n"` の同期書き込み |
+| 自動保存（カード外クリック → ファイル書き込み完了） | 100ms 以内 | frontmatter `parse` → `reassemble` による正規化 → 同期書き込み |
 | ファイル一覧取得（7 日間フィルタ） | 200ms 以内（数十件規模） | ファイル名ベースの日付フィルタで I/O を最小化 |
-| 全文検索 | 200ms 以内（数十件規模） | `search.rs` による全ファイル走査。1,000 件超過時は tantivy ベースのインデックス検索への移行を検討 |
+| 全文検索 | 200ms 以内（数十件規模） | `search.rs` による全ファイル走査。1,000 件超過・200ms 超過時は tantivy ベースのインデックス検索への移行を検討（Component Architecture OQ-ARCH-004 準拠） |
+| アプリ起動 → フィード表示 | 2 秒以内 | 起動時に `list_notes` でデフォルト 7 日間分のみ読み込み。frontmatter パースは先頭 `---` 〜 `---` のみ走査し本文全体は読まない |
 
 すべてのファイル I/O は `std::fs` の同期 API を使用する。Tauri コマンドは非同期（`async`）で定義されるが、内部のファイル操作は `tokio::task::spawn_blocking` で同期ブロック内に配置し、非同期ランタイムのオーバーヘッドを回避する。
 
 ### 4.9 エラーハンドリング
 
-`module:storage` は以下の統一エラー型を定義する。
+`module:storage` は以下の統一エラー型を定義する。エラーコードは Component Architecture §4.5 で規定された `MODULE_REASON` 形式に従う。
 
 | エラーコード | 発生条件 | IPC レスポンス |
 |---|---|---|
-| `INVALID_FILENAME` | ファイル名が正規表現に不合致 | `{ code: "INVALID_FILENAME", message: "..." }` |
-| `PATH_TRAVERSAL` | パストラバーサル攻撃の検出 | `{ code: "PATH_TRAVERSAL", message: "..." }` |
-| `FILE_NOT_FOUND` | 指定されたノートファイルが存在しない | `{ code: "FILE_NOT_FOUND", message: "..." }` |
-| `IO_ERROR` | ファイルシステム I/O エラー（権限不足、ディスク容量不足等） | `{ code: "IO_ERROR", message: "..." }` |
-| `FRONTMATTER_PARSE_ERROR` | frontmatter の YAML パース失敗（致命的ではない。デフォルト値で続行） | ログ出力のみ。IPC レスポンスには影響しない |
-| `DIR_NOT_WRITABLE` | 保存ディレクトリへの書き込み権限がない | `{ code: "DIR_NOT_WRITABLE", message: "..." }` |
+| `STORAGE_INVALID_FILENAME` | ファイル名が正規表現に不合致 | `{ code: "STORAGE_INVALID_FILENAME", message: "..." }` |
+| `STORAGE_PATH_TRAVERSAL` | パストラバーサル攻撃の検出 | `{ code: "STORAGE_PATH_TRAVERSAL", message: "..." }` |
+| `STORAGE_NOT_FOUND` | 指定されたノートファイルが存在しない | `{ code: "STORAGE_NOT_FOUND", message: "..." }` |
+| `STORAGE_WRITE_FAILED` | ファイルシステム I/O エラー（権限不足、ディスク容量不足等） | `{ code: "STORAGE_WRITE_FAILED", message: "..." }` |
+| `STORAGE_FRONTMATTER_PARSE` | frontmatter の YAML パース失敗（ADR-008 不変条件違反時のみ致命化。通常はデフォルト値で続行しログ出力） | `{ code: "STORAGE_FRONTMATTER_PARSE", message: "..." }` |
+| `CONFIG_INVALID_DIR` | 保存ディレクトリが存在せず作成も失敗、または書き込み権限がない | `{ code: "CONFIG_INVALID_DIR", message: "..." }` |
 
-エラーレスポンスは Component Architecture OQ-ARCH-002 で定義された統一フォーマット `TauriCommandError { code: string, message: string }` に準拠する。
+エラーレスポンスは Component Architecture §4.5（OQ-ARCH-002）で定義された統一フォーマット `TauriCommandError { code: string, message: string }` に準拠する。
+
+### 4.10 ADR-008 body 意味論の TypeScript 側との同期
+
+Rust 側 `storage/frontmatter.rs` と TypeScript 側 `src/lib/frontmatter.ts` は独立実装となるため、共通仕様からのドリフトを防ぐ運用規約を設ける（Component Architecture §4.11 準拠）。
+
+1. **仕様の単一情報源**: ADR-008 が body 定義・正規化レイアウト（`---\n<yaml>\n---\n\n<body>`）・body 空時の末尾 `\n` 残存・往復冪等性を規定する。両実装の doc コメントには ADR-008 へのリンクを記載する。
+2. **TypeScript 本番実装の適用範囲**: `src/lib/frontmatter.ts` は編集モードのコピー操作（CodeMirror 6 の未保存テキストから body を抽出して `copy_to_clipboard` に渡す経路）でのみ使用する。IPC レスポンスの frontmatter 再解析には使用しない。
+3. **TypeScript スタブの検証**: `tests/unit/frontmatter.ts`（`splitRaw`, `serializeFrontmatter`）は `tests/unit/frontmatter.test.ts` から参照され、`parseFrontmatter → serializeFrontmatter → parseFrontmatter` の往復冪等性、および `generateNoteContent → extractBody → generateNoteContent` の擬似往復冪等性を表明する。本ファイルは `module:storage` が所有する。
+4. **Rust 側の検証**: `src-tauri/src/storage/frontmatter.rs` 末尾の `#[cfg(test)] mod tests` に `parse → reassemble → parse` の往復で `(tags, body)` が一致することを表明するテストを配置する。
+5. **回帰防止**: N 回繰り返しても body 先頭に改行 `\n` が累積しないこと（AC-STOR-06）をユニットテストで保証し、Rust/TS 両実装のいずれかを変更した場合は両方のテストを必ず再実行する。
 
 ## 5. Open Questions
 

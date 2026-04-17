@@ -20,10 +20,6 @@ codd:
   - targets:
     - module:storage
     reason: ローカル .md ファイル保存は確定済み。DB・クラウド保存は禁止。
-  - targets:
-    - module:storage
-    - module:editor
-    reason: ノート本文（body）は frontmatter 閉じフェンス `---\n` とその直後の区切り `\n` を含まない。parse→reassemble の往復は冪等であること（ADR-008）。
   modules:
   - editor
   - storage
@@ -34,7 +30,7 @@ codd:
 
 ## 1. Overview
 
-本 ADR は PromptNotes の技術スタック選定に関する意思決定を記録する。PromptNotes は「AI へ渡すプロンプトを素早く書き溜めるノートアプリ」であり、タイトル不要・本文のみ・1 画面完結をコンセプトとする。ターミナルや IDE へのペーストを主用途とし、AI 呼び出し機能は持たない。
+本 ADR は PromptNotes の技術スタック選定における意思決定を記録する。PromptNotes は「AI へ渡すプロンプトを素早く書き溜める」ローカルファースト・ノートアプリであり、1 画面フィード UI 上でノートの作成・編集・コピーを完結させる。ターミナルや IDE へのペーストを主用途とし、AI 呼び出し機能・クラウド同期・モバイル対応はスコープ外とする。
 
 本ドキュメントは以下のリリース不可制約（Non-negotiable conventions）に準拠する。
 
@@ -167,7 +163,7 @@ codd:
 
 - **ステータス**: 確定（変更不可・リリース不可制約）
 - **決定日**: 2026-04-15
-- **コンテキスト**: ADR-004 で確定した `.md` ファイル構造（YAML frontmatter + 本文）における、frontmatter と body の境界定義を ADR レベルで明文化していなかった。結果として Rust (`src-tauri/src/storage/frontmatter.rs`) と TypeScript (`src/lib/frontmatter.ts`, `tests/unit/frontmatter.ts`) の 3 つの実装で body の解釈が非対称となり、カードを開閉するたびに本文先頭に `\n` が累積するバグが発生した（保存側の `reassemble` が `\n` を追加する一方、パース側は閉じフェンス直後の `\n` を body に含める状態）。本 ADR は body 意味論を単一の仕様として固定し、実装間の非対称性を再発させないためのリリースブロッキング制約として定める。
+- **コンテキスト**: ADR-004 で確定した `.md` ファイル構造（YAML frontmatter + 本文）における、frontmatter と body の境界定義を ADR レベルで明文化していなかった。結果として Rust (`src-tauri/src/storage/frontmatter.rs`) と TypeScript (`src/lib/frontmatter.ts`, `tests/unit/frontmatter.ts`) の 3 つの実装で body の解釈が非対称となり、ノートを開閉するたびに本文先頭に `\n` が累積するバグが発生した（保存側の `reassemble` が `\n` を追加する一方、パース側は閉じフェンス直後の `\n` を body に含める状態）。本 ADR は body 意味論を単一の仕様として固定し、実装間の非対称性を再発させないためのリリースブロッキング制約として定める。
 - **決定**:
   1. **body の定義**: ファイル内容のうち、frontmatter ブロック（開きフェンス `---\n` から閉じフェンス `---\n` まで）と、閉じフェンス直後の **区切り `\n` 1 つ** を除いた残り全体を body とする。
   2. **ファイル上のレイアウト**: ファイル全体は次の形式で正規化される — `---\n<yaml>\n---\n\n<body>`。frontmatter ブロックと body の間に空行 1 行が必ず入る。この空行は frontmatter 側の責務であり、body には含まれない。
@@ -189,6 +185,29 @@ codd:
   - **body に区切り `\n` を含める方針** — 下流処理で `trimStart()` が必要になり、かつ実装によって `trim` する場所が分散する（本番 TS の `extractBody` のみで吸収するなど）ため、意味論の単一源泉化という本 ADR の目的を達成できない。
   - **空行 1 行を廃止し `---\n<body>` レイアウトに変更する方針** — Obsidian/VS Code など他ツールで開いたときの視認性が低下し、ADR-004 の相互運用性根拠に反する。また既存ファイルのマイグレーションが発生するため、リリース不可制約違反となる。
 
+### ADR-009: フロントエンド未使用コード検出 — knip
+
+- **ステータス**: 確定
+- **決定日**: 2026-04-17
+- **コンテキスト**: フロントエンド（Svelte / TypeScript）のコードベースにおいて、未使用の変数・import、未使用エクスポート、未使用ファイル／コンポーネントが蓄積するリスクがある。ADR-007 で設置しないと決定した `src/routes/` が残存している事例もあり、継続的に未使用コードを検出する仕組みが必要と判断した。
+- **決定**: knip を採用し、ローカル開発時の lint として `npm run lint:unused` で実行可能にする。CI への組み込みは現時点では対象外とする。
+- **根拠**:
+  - 未使用の変数・import、未使用エクスポート、未使用ファイル／コンポーネントを 1 ツールで包括的に検出できる
+  - Svelte / Vite / Vitest のプラグインが公式サポートされており、本プロジェクトの技術スタック（ADR-001〜003）と合致する
+  - ESLint を別途導入せずとも未使用コード検出を賄える
+- **却下した選択肢**:
+  - **ts-prune** — 未使用エクスポートの検出に特化しており、未使用ファイル単位の検出ができない。2023 年以降メンテナンスが停滞している。
+  - **unimported** — Svelte コンポーネント（`.svelte` ファイル）のサポートが弱く、誤検出のリスクが高い。
+- **実装上の要件**:
+  - `package.json` の `devDependencies` に `knip` を追加する。
+  - `package.json` の `scripts` に `"lint:unused": "knip"` を追加する。
+  - `knip.json`（または `knip.config.ts`）で以下を設定する:
+    - `ignore`: `src/generated/**` を除外する（CoDD の `codd implement` が生成する中間成果物であり、`codd assemble` 前は本番コードから参照されないため）。
+    - Svelte / Vite / Vitest プラグインを有効化する。
+  - `src/routes/` は除外せず、knip が未使用として正しく検出する対象とする（ADR-007 で設置禁止が決定済み）。
+
+---
+
 ## 3. Follow-ups
 
 | ID | 項目 | トリガー条件 | 対応方針 |
@@ -199,3 +218,4 @@ codd:
 | FU-004 | Tauri v2 以降の安定化 | Tauri 新メジャーバージョン安定版リリース時 | API 変更の影響を評価し、ファイルシステムアクセス（`fs` プラグイン）およびクリップボード操作（`clipboard-manager` プラグイン）の互換性を確認する。 |
 | FU-005 | CodeMirror 6 プラグインエコシステム監視 | 半年ごとの定期レビュー | Markdown ハイライトパッケージおよび frontmatter カスタマイズ関連の更新を確認し、必要に応じてアップデートする。 |
 | FU-006 | SvelteKit 採用の再評価 | 以下のいずれかが発生した場合: (a) 複数ページ構成への要件が追加される、(b) Web 版/ブラウザ配布が要件化される、(c) 動的パラメータを持つルートが 3 件以上発生する | 原則として `svelte-spa-router`（ADR-007 参照）を採用する。SvelteKit 採用は「ファイルベースルーティングの DX が本質的に必要」または「Web 版併売で SSR/プリレンダリングが必要」と判断された場合のみ、ADR-007 を更新する形で新規 ADR として起草する。 |
+| FU-007 | `lint:unused` の CI ゲート化 | CI パイプラインを整備した時点 | ADR-009 で導入した `npm run lint:unused`（knip）を CI のチェックに追加し、未使用コードの混入を PR マージ前にブロックする。 |

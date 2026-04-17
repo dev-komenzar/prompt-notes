@@ -41,7 +41,7 @@ codd:
 | `NoteEditor.svelte` | `src/lib/components/NoteEditor.svelte` | CodeMirror 6 インスタンスのライフサイクル管理、Markdown シンタックスハイライト、frontmatter 背景色装飾 |
 | `CopyButton.svelte` | `src/lib/components/CopyButton.svelte` | 本文全体の 1 クリッククリップボードコピー、視覚フィードバック |
 | `DeleteButton.svelte` | `src/lib/components/DeleteButton.svelte` | ノート削除 UI |
-| `frontmatter.ts` | `src/lib/utils/frontmatter.ts` | フロントエンド側の表示用 frontmatter 軽量パース（読み取り専用） |
+| `frontmatter.ts` | `src/lib/frontmatter.ts` | フロントエンド側の body 意味論実装（編集モードのコピー操作専用、ADR-008 準拠）。`extractBody` は読み取り、`generateNoteContent` は再構築を担当 |
 
 ### リリースブロッキング制約への準拠
 
@@ -122,11 +122,11 @@ sequenceDiagram
     alt EditMode (EditorView マウント中)
         NC->>Ed: getContent()
         Ed-->>NC: rawMarkdown (Doc.toString())
-        NC->>NC: extractBody(rawMarkdown)
+        NC->>NC: extractBody(rawMarkdown)<br/>(src/lib/frontmatter.ts)
     else ViewMode (EditorView 未マウント)
         NC->>TC: readNote(filename)
         TC-->>NC: { content }
-        NC->>NC: extractBody(content)
+        NC->>NC: extractBody(content)<br/>(src/lib/frontmatter.ts)
     end
 
     NC-->>CB: bodyText (frontmatter 除去済み本文)
@@ -136,7 +136,7 @@ sequenceDiagram
     ClipPlugin-->>CmdClip: Ok
     CmdClip-->>TC: { success: true }
     TC-->>CB: success
-    CB->>CB: アイコン変更 "✓"<br/>2 秒後に元のコピーアイコンに復帰
+    CB->>CB: ラベル変更 "✓ Copied"<br/>2 秒後に既定の "Copy" ラベルへ復帰
 
     Note over CB: Web Clipboard API<br/>(navigator.clipboard) は使用禁止。<br/>Rust IPC 経由を強制。
     Note over NC: EditMode では未保存の編集内容を<br/>コピーする（保存をブロックしない）。<br/>ViewMode では保存済みファイル内容を<br/>コピーする。
@@ -146,11 +146,11 @@ sequenceDiagram
 
 クリップボードコピーの IPC フローは `CopyButton.svelte` → `tauri-commands.ts` → `commands/clipboard.rs` → Tauri `clipboard-manager` プラグインの 4 段階で構成される。フロントエンドが `navigator.clipboard` API を直接呼び出すことは禁止であり、この制約は ESLint ルール `no-restricted-globals` で `navigator.clipboard` を禁止することで構造的に強制する。
 
-`CopyButton.svelte` がコピー対象とするのは **frontmatter を除去した本文テキスト** である。frontmatter の除去は `frontmatter.ts` の `extractBody(rawMarkdown): string` 関数で実行する。この関数は先頭の `---` 〜 `---` ブロックを除去し、残りのテキストを返却する読み取り専用操作であり、書き込み正規化は行わない。
+`CopyButton.svelte` がコピー対象とするのは **frontmatter を除去した本文テキスト** である。frontmatter の除去は `src/lib/frontmatter.ts` の `extractBody(rawMarkdown): string` 関数で実行する。この関数は ADR-008 の body 意味論に従い、閉じフェンス `---\n` 直後の区切り `\n` 1 つを body に含めない形で本文を返す。
 
 ソース Markdown の取得元はモードによって異なる。`NoteCard.svelte` が `getBodyContent()` の内部で以下のように分岐する。
 
-- **EditMode**: `NoteEditor.getContent()`（`EditorView.state.doc.toString()`）を呼び出し、未保存の最新 Doc 内容を取得する。このパスは `read_note` IPC を経由しないため、コピー操作は自動保存を誘発せず編集状態も維持する。
+- **EditMode**: `NoteEditor.getContent()`（`EditorView.state.doc.toString()`）を呼び出し、未保存の最新 Doc 内容を取得する。このパスは `read_note` IPC を経由しないため、コピー操作は自動保存を誘発せず編集状態も維持する。これは detail:component_architecture §3.1 で `src/lib/frontmatter.ts` を編集モードのコピー操作専用と定義した用途に一致する。
 - **ViewMode**: `read_note` IPC で保存済みファイル内容を読み取る。EditorView は存在しないため、ファイルが単一信頼源となる。
 
 両経路とも、最終的に `extractBody()` を通してから `copyToClipboard()` に渡す。
@@ -201,9 +201,9 @@ sequenceDiagram
 
 Cmd+N / Ctrl+N ショートカットは `module:shell` が `tauri-plugin-global-shortcut` を通じて登録し、`new-note` イベントを `Header.svelte` に emit する。`Header.svelte` はイベントを受信して `tauri-commands.ts` 経由で `create_note` IPC を発行する。
 
-既存カードが編集中の場合は、新規ノート作成前に自動保存 → EditorView 破棄 → ViewMode 遷移を実行する。この前処理を含めても 200ms 以内を目標とする。`create_note` コマンドは固定文字列 `"---\ntags: []\n---\n"` を書き込む同期処理であるため、IPC のラウンドトリップ時間を含めても 50ms 以内に完了する。
+既存カードが編集中の場合は、新規ノート作成前に自動保存 → EditorView 破棄 → ViewMode 遷移を実行する。この前処理を含めても 200ms 以内を目標とする。`create_note` コマンドは固定文字列 `"---\ntags: []\n---\n\n"` を書き込む同期処理であるため、IPC のラウンドトリップ時間を含めても 50ms 以内に完了する。
 
-CodeMirror 6 の初期化は最小拡張セットで実行する。フォーカスは `EditorView` の `focus()` メソッドで `.cm-content` に移動し、ユーザーは即座に入力を開始できる。
+CodeMirror 6 の初期化は最小拡張セットで実行する。カーソルはドキュメント末尾（`doc.length`）に配置し、フォーカスは `EditorView` の `focus()` メソッドで `.cm-content` に移動する。これにより新規ノート（Body 空）・既存ノートを問わず、ユーザーは Body 末尾から即座に入力を開始できる（AC-EDIT-13）。カーソル位置は `EditorView.destroy()` で揮発し、再編集時は毎回末尾にリセットされる。
 
 ### 2.4 エディタ内部コンポーネント構造図
 
@@ -219,8 +219,8 @@ graph TB
         end
 
         subgraph "ViewMode 時のみ表示"
-            BODY_PREVIEW["本文プレビュー<br/>(frontmatter 除去済み)"]
-            TAG_DISPLAY["タグ表示<br/>(frontmatter.ts で抽出)"]
+            BODY_PREVIEW["本文プレビュー<br/>(IPC レスポンスの preview)"]
+            TAG_DISPLAY["タグ表示<br/>(IPC レスポンスの tags)"]
             TIMESTAMP["タイムスタンプ表示<br/>(timestamp.ts で変換)"]
         end
 
@@ -258,6 +258,8 @@ graph TB
 
 `NoteCard.svelte` はエディタモジュールのルートコンテナであり、`NoteEditor.svelte`、`CopyButton.svelte`、`DeleteButton.svelte` を子コンポーネントとして保持する。各子コンポーネントは `NoteCard.svelte` からのみインスタンス化され、`Feed.svelte` や `Header.svelte` が直接生成することはない。
 
+ViewMode におけるタグ表示と本文プレビューは、`list_notes` / `read_note` IPC レスポンスに含まれるパース済み構造化データ（`NoteMetadata.tags`, `NoteMetadata.preview`）をそのまま使用する。フロントエンドが frontmatter を独自に再パースすることはなく、この分担は detail:component_architecture §3.3 の所有権ルールに従う。
+
 `NoteEditor.svelte` 内部の CodeMirror 6 拡張は 4 つの要素で構成される。このうち `FrontmatterDecoration` は本設計書固有の実装であり、他の拡張は CodeMirror 6 標準パッケージからインポートする。タイトル入力欄は存在せず、エディタ領域は `EditorView` 単体で構成される。
 
 ## 3. Ownership Boundaries
@@ -270,9 +272,9 @@ graph TB
 |---|---|---|
 | `NoteCard.svelte` | 表示/編集モード切り替え、自動保存トリガー発火、子コンポーネントへの `NoteMetadata` 供給 | IPC コマンドの直接呼び出し（`tauri-commands.ts` 経由を強制）、frontmatter の書き込み正規化 |
 | `NoteEditor.svelte` | CodeMirror 6 インスタンスのライフサイクル（生成・破棄）、Markdown シンタックスハイライト拡張の構成、frontmatter 背景色装飾の適用 | Markdown の HTML レンダリング / プレビュー、タイトル入力欄の実装、`invoke` の直接呼び出し |
-| `CopyButton.svelte` | 1 クリックコピー UI、コピー成功/失敗の視覚フィードバック（アイコン変化） | `navigator.clipboard` API の使用、frontmatter を含むテキストのコピー |
-| `DeleteButton.svelte` | 削除操作 UI、確認ダイアログの表示（OQ-ARCH-003 確定後） | ファイルシステムへの直接アクセス |
-| `frontmatter.ts` | 表示用 frontmatter 軽量パース（タグ抽出、本文分離）。読み取り専用 | frontmatter の書き込み・再構成・正規化（Rust 側 `storage/frontmatter.rs` が正規所有者） |
+| `CopyButton.svelte` | 1 クリックコピー UI、コピー成功/失敗の視覚フィードバック（ラベル変化） | `navigator.clipboard` API の使用、frontmatter を含むテキストのコピー |
+| `DeleteButton.svelte` | 削除操作 UI、ゴミ箱移動失敗時の完全削除確認ダイアログ表示 | ファイルシステムへの直接アクセス |
+| `src/lib/frontmatter.ts` | **編集モードのコピー操作専用**の body 抽出 (`extractBody`) と本文再構築 (`generateNoteContent`)。ADR-008 body 意味論の TypeScript 本番実装 | IPC レスポンスの frontmatter 再解析、ファイル I/O 経路での利用（Rust 側 `storage/frontmatter.rs` が排他所有） |
 
 ### 3.2 モジュール間の依存と所有権境界
 
@@ -280,34 +282,39 @@ graph TB
 
 | 依存先 | 所有モジュール | `module:editor` の利用方法 | 禁止事項 |
 |---|---|---|---|
-| `tauri-commands.ts` | `module:shell`（API 定義管理） | `saveNote()`, `deleteNote()`, `copyToClipboard()`, `readNote()` をインポートして呼び出し | `invoke` の直接呼び出し、新しい IPC ラッパーの独自定義 |
+| `tauri-commands.ts` | `module:shell`（API 定義管理） | `saveNote()`, `deleteNote()`, `forceDeleteNote()`, `copyToClipboard()`, `readNote()`, `createNote()` をインポートして呼び出し | `invoke` の直接呼び出し、新しい IPC ラッパーの独自定義 |
 | `timestamp.ts` | `module:storage`（フォーマット仕様決定） | `filenameToDate(filename): Date` をインポートしてタイムスタンプ表示に使用 | ファイル名パースロジックの再実装 |
 | `notes.ts` store | `module:feed` | ノート一覧データの購読（`$notes` による reactive 参照） | ストアへの直接書き込み（書き込みは `Feed.svelte` 経由で `module:feed` が制御） |
 | `commands/clipboard.rs` | `module:shell` | `copy_to_clipboard` IPC コマンドの利用（`tauri-commands.ts` 経由） | クリップボードプラグインの直接呼び出し |
-| `commands/notes.rs` | `module:storage` | `save_note`, `delete_note`, `read_note` IPC コマンドの利用 | ファイル CRUD の独自実装 |
+| `commands/notes.rs` | `module:storage` | `save_note`, `delete_note`, `force_delete_note`, `read_note`, `create_note` IPC コマンドの利用 | ファイル CRUD の独自実装 |
+| `NoteMetadata` / `TauriCommandError` 型 | `module:storage` / 共有（`tauri-commands.ts`） | 型のインポートのみ | 型の再定義、フィールド追加 |
 
-### 3.3 frontmatter 二重パースにおける所有権分離
+### 3.3 frontmatter 処理における所有権分離（ADR-008 準拠）
 
-frontmatter のパースは 2 つのレイヤーで行われるが、責務は明確に分離する。
+frontmatter の処理は Rust 側と TypeScript 側で責務を明確に分離し、detail:component_architecture §3.3 の所有権ルールに厳密に従う。
 
-| レイヤー | ファイル | 所有モジュール | 操作 | 正規性 |
+| レイヤー | ファイル | 所有モジュール | 操作対象 | 用途 |
 |---|---|---|---|---|
-| フロントエンド | `frontmatter.ts` | `module:editor` | 読み取り専用パース（タグ抽出、本文分離） | 近似値（表示用） |
-| バックエンド | `storage/frontmatter.rs` | `module:storage` | 読み書き（パース、正規化、再シリアライズ） | **正（source of truth）** |
+| バックエンド | `src-tauri/src/storage/frontmatter.rs` | `module:storage` | **ファイル I/O に伴う**パース / シリアライズ / 正規化 (`parse` / `reassemble`) | `save_note`, `read_note`, `list_notes`, `search_notes` の内部処理（**source of truth**） |
+| フロントエンド | `src/lib/frontmatter.ts` | `module:editor` | **CodeMirror 6 の未保存テキスト**からの body 抽出 (`extractBody`) と本文再構築 (`generateNoteContent`) | 編集モードでの `CopyButton` によるコピー操作 **のみ** |
 
-不整合が検出された場合（例: フロントエンドのパース結果とバックエンドのパース結果でタグが異なる場合）は、Rust 側の結果で上書きする。フロントエンド側が frontmatter を組み立てて保存することは禁止であり、`saveNote()` に渡すのは CodeMirror 6 から取得した生の Markdown テキスト全体である。
+**重要な禁止事項:**
 
-**body 意味論の統一（ADR-008 準拠）:** フロントエンド側のパース (`src/lib/frontmatter.ts` の `extractBody`) とバックエンド側のパース (`src-tauri/src/storage/frontmatter.rs` の `parse`) は、body の範囲について同一の意味論に従う。すなわち body には「frontmatter 閉じフェンス `---\n` とその直後の区切り `\n`」を含めない。例えば入力 `---\ntags: []\n---\n\nHello` に対して、両実装とも body = `"Hello"` を返す（先頭の `\n` を含まない）。本文生成側（Rust の `reassemble`、TS の `generateNoteContent`）は frontmatter と body の間に空行 1 行を挿入する責務を負う。往復冪等性（`parse → serialize → parse` で body が変化しない）を両実装の不変条件として保つ。詳細は `docs/detailed_design/storage_fileformat_design.md` §4.3 および ADR-008 を参照。
+1. `src/lib/frontmatter.ts` は **IPC レスポンスのパース用途には使用しない**。`list_notes` / `read_note` のレスポンスはすでに Rust 側で構造化されているため、タグ・プレビュー・本文は `NoteMetadata` のフィールドをそのまま利用する。
+2. `saveNote()` に渡すのは CodeMirror 6 から取得した生の Markdown テキスト全体であり、フロントエンド側で frontmatter を組み立てて保存することは禁止である。
+3. ViewMode での `CopyButton` は `readNote()` で取得したファイル内容に対して `extractBody()` を適用する。この場合も body 意味論は ADR-008 に準拠する。
+
+**body 意味論の統一（ADR-008 準拠）:** フロントエンド側 `src/lib/frontmatter.ts` の `extractBody` とバックエンド側 `src-tauri/src/storage/frontmatter.rs` の `parse` は、body の範囲について同一の意味論に従う。すなわち body には「frontmatter 閉じフェンス `---\n` とその直後の区切り `\n` 1 つ」を含めない。例えば入力 `---\ntags: []\n---\n\nHello` に対して、両実装とも body = `"Hello"` を返す（先頭の `\n` を含まない）。本文生成側（Rust の `reassemble`、TS の `generateNoteContent`）は frontmatter と body の間に空行 1 行（区切り `\n` 1 つ）を挿入する責務を負い、body 空時は末尾 `\n` を残す。往復冪等性（`parse → serialize → parse` で `(tags, body)` が変化しない）を両実装の不変条件として保ち、`tests/unit/frontmatter.test.ts` と Rust `#[cfg(test)] mod tests` の双方で検証する。詳細は ADR-008 および detail:component_architecture §4.11 を参照。
 
 ### 3.4 CopyButton のコピー対象テキスト所有権
 
-`CopyButton.svelte` がクリップボードにコピーするテキストは **frontmatter を除去した本文** である。除去ロジックは `frontmatter.ts` の `extractBody()` 関数が単一所有する。
+`CopyButton.svelte` がクリップボードにコピーするテキストは **frontmatter を除去した本文** である。除去ロジックは `src/lib/frontmatter.ts` の `extractBody()` 関数が単一所有する。
 
 ```
 extractBody(rawMarkdown: string): string
 ```
 
-この関数は先頭の `---\n...---\n` ブロックを正規表現 `/^---\n[\s\S]*?\n---\n/` で除去し、残りのテキスト先頭の空行 1 行も合わせて取り除いた結果を返す（ADR-008 の body 意味論準拠。具体的には `trimStart()` 相当の処理、または閉じフェンス後の `\n?` を正規表現に含める実装）。frontmatter が存在しない場合は入力テキストをそのまま返す。`CopyButton.svelte` はこの関数の戻り値を `copyToClipboard()` に渡し、独自の文字列加工を行わない。
+この関数は ADR-008 の body 意味論に従い、先頭の `---\n...\n---\n` ブロックとその直後の区切り `\n` 1 つを除去し、残りの本文テキストを返す。frontmatter が存在しない場合は入力テキストをそのまま返す。`CopyButton.svelte` はこの関数の戻り値を `copyToClipboard()` に渡し、独自の文字列加工を行わない。
 
 ## 4. Implementation Implications
 
@@ -419,13 +426,13 @@ const frontmatterDecoration = () => ViewPlugin.fromClass(
 | 項目 | 仕様 |
 |---|---|
 | 表示条件 | **ViewMode / EditMode の両方で常時表示**。`NoteCard.svelte` は `{#if editing}` / `{:else}` 分岐の外側（モード共通領域）に `CopyButton` を配置し、モード遷移で再マウントしない |
-| コピー対象 | frontmatter を除去した本文全体（`frontmatter.ts` の `extractBody()` で生成）。ソース取得元は EditMode では `NoteEditor.getContent()`（未保存 Doc）、ViewMode では `readNote()`（保存済みファイル） |
+| コピー対象 | frontmatter を除去した本文全体（`src/lib/frontmatter.ts` の `extractBody()` で生成、ADR-008 body 意味論準拠）。ソース取得元は EditMode では `NoteEditor.getContent()`（未保存 Doc）、ViewMode では `readNote()`（保存済みファイル） |
 | 編集への副作用 | EditMode でのコピー操作は自動保存を誘発せず、EditorView のフォーカス・選択状態・Undo 履歴を変更しない |
 | レイアウト | EditMode では CodeMirror 6 の入力領域と重ならない位置（例: カード右上固定、またはモード共通フッタ）に配置する。**ボタンは枠線・背景・テキストラベルを持ち、絵文字フォント非依存で常に視認可能であること**（後述の視認性要件参照） |
 | IPC 経路 | `tauri-commands.ts` の `copyToClipboard(text)` → `commands/clipboard.rs` の `copy_to_clipboard` → Tauri `clipboard-manager` プラグイン |
 | ラベル表記 | 既定: `Copy`（テキスト）。成功時: `✓ Copied`。失敗時: `✕ Failed`。**絵文字単体での表示は禁止**（描画フォントに依存して不可視化するリスクがあるため、テキストとの併記または SVG アイコンを用いる） |
 | 視覚フィードバック | コピー成功時: ラベルを `✓ Copied` に変更し、`color: var(--success)` および同色の `border-color` を適用。2,000ms 後に既定の `Copy` ラベルへ復帰 |
-| エラー時 | コピー失敗時: ラベルを `✕ Failed` に変更し、`color: var(--danger)` および同色の `border-color` を適用。3,000ms 後に既定へ復帰。コンソールにエラーをログ出力 |
+| エラー時 | コピー失敗時: ラベルを `✕ Failed` に変更し、`color: var(--danger)` および同色の `border-color` を適用。3,000ms 後に既定へ復帰。`TauriCommandError { code: "CLIPBOARD_FAILED" }` をコンソールに出力 |
 | スタイル基盤 | プロジェクトは Tailwind を採用しないため、**カラー指定は `src/styles/global.css` で定義する CSS カスタムプロパティ**（`--surface`, `--surface-hover`, `--border`, `--text`, `--success`, `--danger`, `--accent`）を使用する。デフォルト時はカード背景と区別できる枠線（`1px solid var(--border)`）と背景（`var(--surface)`）を持ち、ホバー時は `var(--surface-hover)` + `var(--accent)` 枠で強調する |
 | 連打防止 | フィードバック表示中（2,000ms / 3,000ms）はボタンを `disabled` にし、重複 IPC 呼び出しを防止 |
 | 視認性要件 | DOM への描画だけでなく、bounding box の幅・高さがいずれも 0 でないこと、親 (`NoteCard` / `Feed`) の `overflow` 制約・flex 縮小によりクリップされないこと、`elementFromPoint()` でボタン要素が取得できること（被覆されていないこと）。AC-EDIT-06 / AC-EDIT-06b の否定条件と一致する |
@@ -470,7 +477,7 @@ const frontmatterDecoration = () => ViewPlugin.fromClass(
 |---|---|
 | 表示条件 | `NoteCard.svelte` の表示モード（`{:else}` 分岐内）のフッタ領域に常時マウントされる。編集モード中は `NoteEditor` がカード内を占有するため非表示で良い |
 | ラベル表記 | 既定: `Delete`（テキスト）。**絵文字単体での表示は禁止**。確認ダイアログ表示時は `削除する` / `キャンセル` のボタンに置き換わる |
-| IPC 経路 | `tauri-commands.ts` の `deleteNote(filename)` → `commands/notes.rs` の `delete_note` → `trash` クレートで OS のゴミ箱へ移動。ゴミ箱が利用不可な場合 `TRASH_FAILED` エラーを返却し、UI 側で確認ダイアログを表示 → `forceDeleteNote()` で `std::fs::remove_file()` による完全削除を行う（OQ-EDIT-004 / OQ-ARCH-003 の決定に従う） |
+| IPC 経路 | `tauri-commands.ts` の `deleteNote(filename)` → `commands/notes.rs` の `delete_note` → `trash` クレートで OS のゴミ箱へ移動。ゴミ箱が利用不可な場合 `TauriCommandError { code: "TRASH_FAILED" }` を返却し、UI 側で確認ダイアログを表示 → `forceDeleteNote()` で `std::fs::remove_file()` による完全削除を行う（OQ-EDIT-004 / OQ-ARCH-003 の決定に従う） |
 | イベント | 削除成功時に `dispatch("deleted")` を発火し、親 `NoteCard` 経由で `Feed` の `notes` store からノートを除去する |
 | 連打防止 | IPC 処理中は `disabled` にし、二重発行を防止 |
 | スタイル基盤 | プロジェクトは Tailwind を採用しないため、カラー指定は `src/styles/global.css` の CSS カスタムプロパティ（`--surface`, `--surface-hover`, `--border`, `--danger`）を使用する。デフォルト時は枠線（`1px solid var(--border)`）と背景（`var(--surface)`）、文字色は危険操作を示す `var(--danger)`、ホバー時に枠線も `var(--danger)` に変化させる |
@@ -517,7 +524,7 @@ Cmd+N（macOS）/ Ctrl+N（Linux）ショートカットの登録と処理フロ
 | 2. イベント受信 | `Header.svelte` | `listen("new-note")` でイベントを受信し、新規ノート作成フローを開始 | < 5ms |
 | 3. 既存編集の保存 | `Feed.svelte` | 編集中のカードがあれば自動保存 → ViewMode 遷移 → EditorView 破棄 | < 50ms |
 | 4. IPC 呼び出し | `tauri-commands.ts` | `createNote()` → `invoke("create_note")` | < 30ms |
-| 5. Rust 処理 | `commands/notes.rs` | ファイル名生成 → 空 frontmatter 書き込み → レスポンス返却 | < 20ms |
+| 5. Rust 処理 | `commands/notes.rs` | ファイル名生成 → 空 frontmatter（`"---\ntags: []\n---\n\n"`、ADR-008 準拠）書き込み → レスポンス返却 | < 20ms |
 | 6. カード生成 | `Feed.svelte` → `NoteCard.svelte` | フィード先頭に新規カードを prepend し、EditMode で生成 | < 30ms |
 | 7. エディタマウント | `NoteEditor.svelte` | CodeMirror 6 初期化 → `.cm-content` にフォーカス移動 | < 65ms |
 
@@ -533,7 +540,9 @@ Cmd+N（macOS）/ Ctrl+N（Linux）ショートカットの登録と処理フロ
 | 別カードクリック | EditMode 中に別の `NoteCard` をクリック | 現在のカードの `getContent()` → `saveNote()` → ViewMode 遷移 → 新カードの EditMode 遷移 |
 | Cmd+N / Ctrl+N | EditMode 中にショートカット押下 | 現在のカードの `getContent()` → `saveNote()` → ViewMode 遷移 → 新規ノート作成フロー |
 
-`saveNote()` は `tauri-commands.ts` 経由で `save_note` IPC コマンドを呼び出す。送信するのは CodeMirror 6 の `EditorView.state.doc.toString()` で取得した生の Markdown テキスト全体であり、frontmatter の組み立てや正規化はフロントエンドでは行わない。Rust 側の `storage/frontmatter.rs` が frontmatter のパースと正規化を担当する。
+`saveNote()` は `tauri-commands.ts` 経由で `save_note` IPC コマンドを呼び出す。送信するのは CodeMirror 6 の `EditorView.state.doc.toString()` で取得した生の Markdown テキスト全体であり、frontmatter の組み立てや正規化はフロントエンドでは行わない。Rust 側の `storage/frontmatter.rs` が frontmatter のパースと ADR-008 準拠の再構築（`reassemble`）を担当する。
+
+レスポンスとして返される `NoteMetadata`（`tags`, `preview` 等）はそのまま `notes.ts` store の該当エントリを更新するために使用し、フロントエンドによる frontmatter の再解析は行わない。
 
 自動保存の目標レイテンシは 100ms 以内である。
 
@@ -548,6 +557,7 @@ onMount(() => {
   editorView = new EditorView({
     state: EditorState.create({
       doc: initialContent,
+      selection: { anchor: initialContent.length },
       extensions,
     }),
     parent: editorContainer,
@@ -563,7 +573,7 @@ onDestroy(() => {
 });
 ```
 
-カード遷移時に EditorView を destroy → recreate する方式を採用する（OQ-ARCH-001 の暫定方針に準拠）。非表示で保持・再利用する方式は採用しない。これにより、メモリ消費を最小化し、古い状態がリークするリスクを排除する。
+カード遷移時に EditorView を destroy → recreate する方式を採用する（OQ-ARCH-001 の確定方針に準拠）。非表示で保持・再利用する方式は採用しない。これにより、メモリ消費を最小化し、古い状態がリークするリスクを排除する。
 
 ### 4.8 ESLint による構造的制約の強制
 
@@ -601,12 +611,24 @@ onDestroy(() => {
 | 自動保存（カード外クリック → save_note 完了） | ≤ 100ms | `performance.now()` で `saveNote()` 呼び出し → IPC レスポンス受信までを計測 |
 | CodeMirror 6 初期化（`new EditorView` → `focus()`） | ≤ 65ms | `performance.now()` で `onMount` 開始 → `focus()` 完了までを計測 |
 
-## 5. Open Questions (全件解決済み)
+### 4.10 ADR-008 往復冪等性テストへの関与
+
+`src/lib/frontmatter.ts` の `extractBody` / `generateNoteContent` は ADR-008 body 意味論の TypeScript 本番実装として、`tests/unit/frontmatter.test.ts` における以下の不変条件テストの検証対象となる。
+
+1. `generateNoteContent(tags, body) → extractBody(...)` の擬似往復で `body` が変化しないこと
+2. N 回繰り返しても body 先頭に改行 `\n` が累積しないこと（AC-STOR-06 回帰防止）
+3. body 空時に末尾 `\n` が残ること
+
+これにより、Rust 側 `src-tauri/src/storage/frontmatter.rs` の `#[cfg(test)] mod tests` と合わせて、ファイル I/O 経路と編集モードコピー経路の両者が ADR-008 の共通仕様に準拠することを保証する。
+
+## 5. Open Questions
+
+全 Open Questions は解決済みである。以下に決定事項を記録する。
 
 | ID | 質問 | 影響コンポーネント | 決定 |
 |---|---|---|---|
 | OQ-EDIT-001 | frontmatter 背景色をユーザーがカスタマイズ可能にするか、固定値とするか | `NoteEditor.svelte` (`frontmatter-decoration.ts`) | **固定値 `rgba(59, 130, 246, 0.08)` とする。** ダークモード未対応の現仕様ではカスタマイズ機能の投資対効果が低い |
-| OQ-EDIT-002 | CopyButton のコピー対象を「frontmatter 除去済み本文」とするか「frontmatter 含む生テキスト」とするか | `CopyButton.svelte`, `frontmatter.ts` | **frontmatter 除去済み本文とする。** PromptNotes の用途（LLM プロンプトの保存・コピー）では frontmatter はメタデータであり、コピー対象に含めるとユーザー体験を損なう |
+| OQ-EDIT-002 | CopyButton のコピー対象を「frontmatter 除去済み本文」とするか「frontmatter 含む生テキスト」とするか | `CopyButton.svelte`, `src/lib/frontmatter.ts` | **frontmatter 除去済み本文とする。** PromptNotes の用途（LLM プロンプトの保存・コピー）では frontmatter はメタデータであり、コピー対象に含めるとユーザー体験を損なう |
 | OQ-EDIT-003 | 編集中にブラウザ / アプリがクラッシュした場合の未保存データ復旧機構を設けるか | `NoteEditor.svelte`, `NoteCard.svelte` | **MVP ではクラッシュ復旧機構を実装しない。** 自動保存がカード外クリック時に発火するため、データ損失リスクは限定的。将来的には `localStorage` への定期的なドラフト保存を検討する |
-| OQ-EDIT-004 | DeleteButton に確認ダイアログを表示するか（OQ-ARCH-003 からの引き継ぎ） | `DeleteButton.svelte` | **OQ-ARCH-003 の決定に従う。** `trash` クレートで OS のゴミ箱に移動（確認ダイアログなし）。ゴミ箱移動失敗時のみ確認ダイアログを表示し、ユーザーが完全削除を選択可能 |
+| OQ-EDIT-004 | DeleteButton に確認ダイアログを表示するか（OQ-ARCH-003 からの引き継ぎ） | `DeleteButton.svelte` | **OQ-ARCH-003 の決定に従う。** `trash` クレートで OS のゴミ箱に移動（確認ダイアログなし）。ゴミ箱移動失敗時（`TRASH_FAILED`）のみ確認ダイアログを表示し、ユーザーが `forceDeleteNote()` による完全削除を選択可能 |
 | OQ-EDIT-005 | CodeMirror 6 のキーバインドとして Vim / Emacs モードをサポートするか | `NoteEditor.svelte` | **MVP ではデフォルトキーバインド（`defaultKeymap`）のみをサポートする。** Emacs モードは OS 標準ショートカット（`Ctrl+A` 等）と多数衝突するため、設定 UI での ON/OFF 切り替えが前提。Vim / Emacs モードは `@codemirror/vim` / `@codemirror/legacy-modes` で将来設定 UI と併せて追加する |
