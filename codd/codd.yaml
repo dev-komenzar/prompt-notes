@@ -6,6 +6,7 @@ project:
 ai_commands:
   generate: scripts/codd-generate-wrapper.sh
   implement: scripts/codd-implement-diff-v17.sh
+  assemble: scripts/codd-assemble-wrapper.sh
 
 coding_principles: null
 scan:
