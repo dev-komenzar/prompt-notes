@@ -1,66 +1,76 @@
 <script lang="ts">
-  import { onMount, onDestroy } from "svelte";
-  import { listen } from "@tauri-apps/api/event";
-  import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { saveNote } from "$lib/utils/tauri-commands";
   import Header from "$lib/components/Header.svelte";
   import Feed from "$lib/components/Feed.svelte";
-  import SettingsModal from "$lib/components/SettingsModal.svelte";
-  import type { NoteMetadata } from "$lib/utils/tauri-commands";
+  import NoteEditor from "$lib/components/NoteEditor.svelte";
+  import Settings from "$lib/components/Settings.svelte";
+  import ErrorToast from "$lib/components/ErrorToast.svelte";
+  import { onMount } from "svelte";
+  import { loadConfig } from "$lib/stores/config";
+  import { loadNotes } from "$lib/stores/notes";
+  import { setupWindowCloseHandler } from "$lib/utils/window-close";
+  import { setupGlobalShortcut } from "$lib/utils/global-shortcut";
 
-  let settingsOpen = false;
-  let feed: Feed;
-  let unlistenClose: (() => void) | null = null;
+  let currentView: "feed" | "editor" | "settings" = $state("feed");
+  let editingFilename: string | null = $state(null);
 
-  // Track active editor for window-close save
-  let activeFilename: string | null = null;
-  let getActiveContent: (() => string) | null = null;
-
-  export function registerEditor(filename: string, getContent: () => string) {
-    activeFilename = filename;
-    getActiveContent = getContent;
+  function handleOpenNote(filename: string) {
+    editingFilename = filename;
+    currentView = "editor";
   }
 
-  export function unregisterEditor() {
-    activeFilename = null;
-    getActiveContent = null;
+  function handleNewNote() {
+    editingFilename = null;
+    currentView = "editor";
+  }
+
+  function handleBack() {
+    currentView = "feed";
+    editingFilename = null;
+  }
+
+  function handleOpenSettings() {
+    currentView = "settings";
   }
 
   onMount(async () => {
-    unlistenClose = await listen("before-close", async () => {
-      if (activeFilename && getActiveContent) {
-        try {
-          await saveNote(activeFilename, getActiveContent());
-        } catch (e) {
-          console.error("Failed to save on close:", e);
-        }
-      }
-      await getCurrentWindow().destroy();
-    });
+    await loadConfig();
+    await loadNotes();
+    setupWindowCloseHandler();
+    setupGlobalShortcut(handleNewNote);
   });
-
-  onDestroy(() => {
-    unlistenClose?.();
-  });
-
-  function handleNewNote(e: CustomEvent<NoteMetadata>) {
-    feed?.handleNewNote(e.detail);
-  }
 </script>
 
-<div class="app">
-  <Header on:newNote={handleNewNote} on:openSettings={() => (settingsOpen = true)} />
-  <Feed bind:this={feed} {registerEditor} {unregisterEditor} />
-  {#if settingsOpen}
-    <SettingsModal on:close={() => (settingsOpen = false)} />
-  {/if}
+<div class="app-container">
+  <Header
+    onNewNote={handleNewNote}
+    onOpenSettings={handleOpenSettings}
+    onBack={currentView !== "feed" ? handleBack : undefined}
+    showBack={currentView !== "feed"}
+  />
+  <main class="app-main">
+    {#if currentView === "feed"}
+      <Feed onOpenNote={handleOpenNote} />
+    {:else if currentView === "editor"}
+      <NoteEditor filename={editingFilename} onBack={handleBack} />
+    {:else if currentView === "settings"}
+      <Settings onBack={handleBack} />
+    {/if}
+  </main>
+  <ErrorToast />
 </div>
 
 <style>
-  .app {
+  .app-container {
     display: flex;
     flex-direction: column;
-    height: 100%;
+    height: 100vh;
+    background: var(--surface);
+    color: var(--text);
+  }
+  .app-main {
+    flex: 1;
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
   }
 </style>

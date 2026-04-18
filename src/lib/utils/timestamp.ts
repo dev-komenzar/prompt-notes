@@ -1,20 +1,42 @@
-const FILENAME_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2})(\d{2})(\d{2})\.md$/;
-
-export function filenameToDate(filename: string): Date {
-  const m = filename.match(FILENAME_RE);
-  if (!m) throw new Error(`Invalid filename: ${filename}`);
-  const [, y, mo, d, h, mi, s] = m;
-  return new Date(+y, +mo - 1, +d, +h, +mi, +s);
+/**
+ * Parse a note filename (YYYY-MM-DDTHHMMSS.md) to a Date.
+ */
+export function filenameToDate(filename: string): Date | null {
+  const match = filename.match(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2})(\d{2})(\d{2})\.md$/
+  );
+  if (!match) return null;
+  const [, y, mo, d, h, mi, s] = match;
+  return new Date(`${y}-${mo}-${d}T${h}:${mi}:${s}`);
 }
 
+/**
+ * Format a Date to the filename prefix (without .md).
+ */
 export function dateToFilenamePrefix(date: Date): string {
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}T${p(date.getHours())}${p(date.getMinutes())}${p(date.getSeconds())}`;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
 }
 
-export function formatTimestamp(createdAt: string): string {
-  const d = new Date(createdAt);
-  if (isNaN(d.getTime())) return createdAt;
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+/**
+ * Format a Date for display in the feed.
+ */
+export function formatDisplayDate(dateStr: string): string {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMin = Math.floor(diffMs / 60000);
+  const diffHour = Math.floor(diffMs / 3600000);
+  const diffDay = Math.floor(diffMs / 86400000);
+
+  if (diffMin < 1) return "just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffHour < 24) return `${diffHour}h ago`;
+  if (diffDay < 7) return `${diffDay}d ago`;
+
+  return date.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
 }

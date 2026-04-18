@@ -1,88 +1,84 @@
 <script lang="ts">
-  import { onMount, onDestroy, createEventDispatcher } from "svelte";
-  import { listen } from "@tauri-apps/api/event";
-  import { createNote } from "$lib/utils/tauri-commands";
-  import SearchBar from "./SearchBar.svelte";
-  import TagFilter from "./TagFilter.svelte";
-  import DateFilter from "./DateFilter.svelte";
-
-  const dispatch = createEventDispatcher();
-  let unlisten: (() => void) | null = null;
-  let creating = false;
-  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-
-  async function handleNewNote() {
-    if (creating) return;
-    if (debounceTimer) clearTimeout(debounceTimer);
-    creating = true;
-    try {
-      const meta = await createNote();
-      dispatch("newNote", meta);
-    } catch (e) {
-      console.error("Failed to create note:", e);
-    } finally {
-      debounceTimer = setTimeout(() => { creating = false; }, 500);
-    }
+  interface Props {
+    onNewNote: () => void;
+    onOpenSettings: () => void;
+    onBack?: (() => void) | undefined;
+    showBack: boolean;
   }
 
-  onMount(async () => {
-    unlisten = await listen("new-note", () => handleNewNote());
-  });
-
-  onDestroy(() => {
-    unlisten?.();
-    if (debounceTimer) clearTimeout(debounceTimer);
-  });
+  let { onNewNote, onOpenSettings, onBack, showBack }: Props = $props();
 </script>
 
 <header class="header">
   <div class="header-left">
-    <button class="btn-new" on:click={handleNewNote} disabled={creating}>+ New</button>
-    <button class="btn-settings" on:click={() => dispatch("openSettings")}>⚙️</button>
-  </div>
-  <div class="header-center">
-    <SearchBar />
+    {#if showBack && onBack}
+      <button class="header-btn" onclick={onBack} aria-label="Back to feed">
+        ← Back
+      </button>
+    {/if}
+    <button
+      class="header-title-btn"
+      onclick={onBack ?? (() => {})}
+      aria-label="Grid view"
+      data-testid="nav-grid"
+    >
+      <h1 class="header-title">PromptNotes</h1>
+    </button>
   </div>
   <div class="header-right">
-    <TagFilter />
-    <DateFilter />
+    <button class="header-btn primary" onclick={onNewNote} aria-label="Create new note" data-testid="nav-editor">
+      + New Note
+    </button>
+    <button class="header-btn" onclick={onOpenSettings} aria-label="Open settings" data-testid="nav-settings">
+      Settings
+    </button>
   </div>
 </header>
 
 <style>
   .header {
     display: flex;
+    justify-content: space-between;
     align-items: center;
-    gap: 12px;
     padding: 8px 16px;
-    background: var(--surface);
     border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
+    background: var(--surface);
+    min-height: 48px;
   }
   .header-left {
     display: flex;
-    gap: 8px;
     align-items: center;
-  }
-  .header-center {
-    flex: 1;
+    gap: 12px;
   }
   .header-right {
     display: flex;
-    gap: 8px;
     align-items: center;
+    gap: 8px;
   }
-  .btn-new {
-    padding: 6px 16px;
-    background: var(--accent);
-    color: white;
-    border-radius: 6px;
+  .header-title-btn {
+    padding: 0;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+  }
+  .header-title {
+    font-size: 1.1rem;
     font-weight: 600;
   }
-  .btn-new:hover:not(:disabled) { background: var(--accent-hover); }
-  .btn-new:disabled { opacity: 0.5; }
-  .btn-settings {
-    font-size: 18px;
-    padding: 4px 8px;
+  .header-btn {
+    padding: 6px 12px;
+    border-radius: var(--radius);
+    font-size: 0.875rem;
+    transition: background 0.15s;
+  }
+  .header-btn:hover {
+    background: var(--surface-secondary);
+  }
+  .header-btn.primary {
+    background: var(--accent);
+    color: white;
+  }
+  .header-btn.primary:hover {
+    background: var(--accent-hover);
   }
 </style>

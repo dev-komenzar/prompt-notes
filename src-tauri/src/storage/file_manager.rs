@@ -1,97 +1,137 @@
 use chrono::Local;
 use regex::Regex;
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
-use std::thread;
-use std::time::Duration;
 
-static FILENAME_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{6}\.md$").unwrap());
-
-pub fn is_valid_filename(name: &str) -> bool {
-    FILENAME_RE.is_match(name)
+pub struct FileManager {
+    base_dir: PathBuf,
 }
 
-pub fn generate_filename(notes_dir: &Path) -> Result<String, String> {
-    for _ in 0..5 {
-        let name = Local::now().format("%Y-%m-%dT%H%M%S.md").to_string();
-        if !notes_dir.join(&name).exists() {
-            return Ok(name);
+static FILENAME_RE: &str = r"^\d{4}-\d{2}-\d{2}T\d{6}\.md$";
+
+impl FileManager {
+    pub fn new(base_dir: &str) -> Self {
+        Self {
+            base_dir: PathBuf::from(base_dir),
         }
-        thread::sleep(Duration::from_secs(1));
     }
-    Err("Failed to generate unique filename".into())
-}
 
-pub fn validate_path(filename: &str, notes_dir: &Path) -> Result<PathBuf, String> {
-    if !is_valid_filename(filename) {
-        return Err(format!("Invalid filename: {}", filename));
+    pub fn ensure_directory(&self) -> io::Result<()> {
+        fs::create_dir_all(&self.base_dir)
     }
-    if filename.contains('/') || filename.contains('\\') {
-        return Err("Path traversal detected".into());
+
+    pub fn generate_filename(&self) -> String {
+        let now = Local::now();
+        let name = now.format("%Y-%m-%dT%H%M%S").to_string();
+        format!("{}.md", name)
     }
-    let full = notes_dir.join(filename);
-    if let Ok(canon_dir) = notes_dir.canonicalize() {
-        if full.exists() {
-            if let Ok(canon_file) = full.canonicalize() {
-                if !canon_file.starts_with(&canon_dir) {
-                    return Err("Path traversal detected".into());
+
+    pub fn validate_filename(filename: &str) -> bool {
+        let re = Regex::new(FILENAME_RE).unwrap();
+        re.is_match(filename)
+    }
+
+    pub fn file_path(&self, filename: &str) -> PathBuf {
+        self.base_dir.join(filename)
+    }
+
+    /// Atomic write: write to temp file then rename.
+    pub fn write(&self, filename: &str, content: &str) -> io::Result<()> {
+        self.ensure_directory()?;
+
+        if !Self::validate_filename(filename) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Invalid filename: {}", filename),
+            ));
+        }
+
+        let target = self.file_path(filename);
+        let temp_name = format!(".{}.tmp", filename);
+        let temp_path = self.base_dir.join(&temp_name);
+
+        fs::write(&temp_path, content)?;
+        fs::rename(&temp_path, &target)?;
+
+        Ok(())
+    }
+
+    pub fn read(&self, filename: &str) -> io::Result<String> {
+        if !Self::validate_filename(filename) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Invalid filename: {}", filename),
+            ));
+        }
+        let path = self.file_path(filename);
+        fs::read_to_string(&path)
+    }
+
+    pub fn delete(&self, filename: &str) -> io::Result<()> {
+        if !Self::validate_filename(filename) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Invalid filename: {}", filename),
+            ));
+        }
+        let path = self.file_path(filename);
+        fs::remove_file(&path)
+    }
+
+    pub fn list_files(&self) -> io::Result<Vec<String>> {
+        let mut files = Vec::new();
+
+        if !self.base_dir.exists() {
+            return Ok(files);
+        }
+
+        let re = Regex::new(FILENAME_RE).unwrap();
+
+        for entry in fs::read_dir(&self.base_dir)? {
+            let entry = entry?;
+            if let Some(name) = entry.file_name().to_str() {
+                if re.is_match(name) && entry.file_type()?.is_file() {
+                    files.push(name.to_string());
                 }
             }
         }
+
+        // Sort descending (newest first)
+        files.sort_by(|a, b| b.cmp(a));
+
+        Ok(files)
     }
-    Ok(full)
 }
 
-pub fn write_file(path: &Path, content: &str) -> Result<(), String> {
-    let dir = path.parent().ok_or("No parent directory")?;
-    let tmp = dir.join(format!(".{}.tmp", path.file_name().unwrap().to_string_lossy()));
-    std::fs::write(&tmp, content).map_err(|e| format!("Write failed: {}", e))?;
-    std::fs::rename(&tmp, path).map_err(|e| {
-        std::fs::remove_file(&tmp).ok();
-        format!("Rename failed: {}", e)
+pub fn filename_to_datetime(filename: &str) -> Option<String> {
+    // Parse YYYY-MM-DDTHHMMSS.md → YYYY-MM-DDTHH:MM:SS
+    let re = Regex::new(r"^(\d{4}-\d{2}-\d{2})T(\d{2})(\d{2})(\d{2})\.md$").unwrap();
+    re.captures(filename).map(|caps| {
+        format!(
+            "{}T{}:{}:{}",
+            &caps[1], &caps[2], &caps[3], &caps[4]
+        )
     })
 }
 
-pub fn read_file(path: &Path) -> Result<String, String> {
-    std::fs::read_to_string(path).map_err(|e| format!("Read failed: {}", e))
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-pub fn list_md_files(notes_dir: &Path) -> Result<Vec<String>, String> {
-    let mut names: Vec<String> = std::fs::read_dir(notes_dir)
-        .map_err(|e| format!("Cannot read directory: {}", e))?
-        .filter_map(|e| e.ok())
-        .filter_map(|e| e.file_name().into_string().ok())
-        .filter(|n| is_valid_filename(n))
-        .collect();
-    names.sort_by(|a, b| b.cmp(a));
-    Ok(names)
-}
+    #[test]
+    fn test_validate_filename() {
+        assert!(FileManager::validate_filename("2025-01-15T143022.md"));
+        assert!(!FileManager::validate_filename("bad-name.md"));
+        assert!(!FileManager::validate_filename("2025-01-15T143022.txt"));
+    }
 
-pub fn filename_to_created_at(filename: &str) -> String {
-    let stem = filename.trim_end_matches(".md");
-    if stem.len() == 17 {
-        let date = &stem[..10];
-        let hh = &stem[11..13];
-        let mm = &stem[13..15];
-        let ss = &stem[15..17];
-        format!("{}T{}:{}:{}", date, hh, mm, ss)
-    } else {
-        stem.to_string()
+    #[test]
+    fn test_filename_to_datetime() {
+        assert_eq!(
+            filename_to_datetime("2025-01-15T143022.md"),
+            Some("2025-01-15T14:30:22".to_string())
+        );
+        assert_eq!(filename_to_datetime("bad.md"), None);
     }
-}
-
-pub fn filename_in_range(filename: &str, from: Option<&str>, to: Option<&str>) -> bool {
-    let stem = filename.trim_end_matches(".md");
-    if let Some(f) = from {
-        if stem < f {
-            return false;
-        }
-    }
-    if let Some(t) = to {
-        if stem > t {
-            return false;
-        }
-    }
-    true
 }

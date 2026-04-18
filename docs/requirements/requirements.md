@@ -9,6 +9,9 @@ codd:
   - id: test:acceptance_criteria
     relation: derives_from
     semantic: governance
+  - id: test:e2e_strategy
+    relation: derives_from
+    semantic: governance
 ---
 
 # PromptNotes — Requirements

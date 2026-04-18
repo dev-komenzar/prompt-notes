@@ -10,6 +10,9 @@ codd:
   - id: design:system-design
     relation: constrained_by
     semantic: governance
+  - id: test:e2e_strategy
+    relation: derives_from
+    semantic: governance
   conventions:
   - targets:
     - module:editor

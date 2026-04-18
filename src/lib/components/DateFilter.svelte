@@ -1,23 +1,37 @@
 <script lang="ts">
-  import { filters } from "$lib/stores/filters";
-  import { dateToFilenamePrefix } from "$lib/utils/timestamp";
+  interface Props {
+    fromDate: string | null;
+    toDate: string | null;
+    onChange: (from: string | null, to: string | null) => void;
+  }
 
-  let fromDate = "";
-  let toDate = "";
+  let { fromDate, toDate, onChange }: Props = $props();
 
-  function applyDates() {
-    filters.update((f) => ({
-      ...f,
-      fromDate: fromDate ? dateToFilenamePrefix(new Date(fromDate + "T00:00:00")) : f.fromDate,
-      toDate: toDate ? dateToFilenamePrefix(new Date(toDate + "T23:59:59")) : f.toDate,
-    }));
+  function handleFromChange(e: Event) {
+    const target = e.target as HTMLInputElement;
+    onChange(target.value || null, toDate);
+  }
+
+  function handleToChange(e: Event) {
+    const target = e.target as HTMLInputElement;
+    onChange(fromDate, target.value || null);
   }
 </script>
 
-<div class="date-filter">
-  <input type="date" bind:value={fromDate} on:change={applyDates} />
-  <span>–</span>
-  <input type="date" bind:value={toDate} on:change={applyDates} />
+<div class="date-filter" data-testid="date-filter">
+  <input
+    type="date"
+    value={fromDate ?? ""}
+    oninput={handleFromChange}
+    aria-label="From date"
+  />
+  <span class="date-sep">–</span>
+  <input
+    type="date"
+    value={toDate ?? ""}
+    oninput={handleToChange}
+    aria-label="To date"
+  />
 </div>
 
 <style>
@@ -28,12 +42,13 @@
   }
   input[type="date"] {
     padding: 4px 8px;
-    background: var(--bg);
     border: 1px solid var(--border);
-    border-radius: 6px;
-    font-size: 12px;
-    color: var(--text);
-    width: 130px;
+    border-radius: var(--radius);
+    background: var(--surface);
+    font-size: 0.8rem;
   }
-  span { color: var(--text-muted); }
+  .date-sep {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+  }
 </style>

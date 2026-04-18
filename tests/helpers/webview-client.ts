@@ -20,9 +20,17 @@ export async function navigateToView(view: 'grid' | 'editor' | 'settings'): Prom
     editor: '[data-testid="nav-editor"], [aria-label="Editor"]',
     settings: '[data-testid="nav-settings"], [aria-label="Settings"]',
   };
+  const readyMarkers: Record<string, string> = {
+    grid: '.feed-container, [data-testid="feed-screen"]',
+    editor: '.cm-editor',
+    settings: '[data-testid="settings-screen"]',
+  };
   const el = await browser.$(selectors[view]);
   await el.click();
-  await browser.pause(300);
+  await browser.waitUntil(
+    async () => (await browser.$(readyMarkers[view])).isExisting(),
+    { timeout: 5_000, timeoutMsg: `View "${view}" did not mount within 5s` },
+  );
 }
 
 /** Get the text content of the CodeMirror 6 editor. */

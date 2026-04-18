@@ -1,278 +1,209 @@
-use serde::Serialize;
-use std::path::PathBuf;
-use std::sync::Mutex;
-use tauri::State;
-
 use crate::config::AppConfig;
-use crate::storage::{file_manager, frontmatter, search};
+use crate::storage::file_manager::FileManager;
+use crate::storage::frontmatter;
+use crate::storage::search;
+use serde::{Deserialize, Serialize};
+use tauri::State;
+use std::sync::Mutex;
 
-fn err(code: &str, msg: impl std::fmt::Display) -> String {
-    serde_json::json!({"code": code, "message": msg.to_string()}).to_string()
-}
-
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoteMetadata {
     pub filename: String,
-    pub path: String,
-    pub created_at: String,
+    pub title: String,
     pub tags: Vec<String>,
+    pub created_at: String,
+    pub updated_at: String,
     pub body_preview: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ListNotesResult {
     pub notes: Vec<NoteMetadata>,
-    pub total_count: u32,
+    pub total_count: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SearchResultEntry {
     pub metadata: NoteMetadata,
-    pub snippet: String,
-    pub highlights: Vec<search::HighlightRange>,
+    pub matched_line: String,
+    pub line_number: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SearchNotesResult {
-    pub entries: Vec<SearchResultEntry>,
-    pub total_count: u32,
+    pub results: Vec<SearchResultEntry>,
+    pub total_count: usize,
 }
 
-fn get_notes_dir(config: &State<'_, Mutex<AppConfig>>) -> Result<PathBuf, String> {
-    let cfg = config.lock().map_err(|e| err("INTERNAL", e))?;
-    Ok(PathBuf::from(&cfg.notes_dir))
-}
+fn build_metadata(filename: &str, content: &str) -> NoteMetadata {
+    let parsed = frontmatter::parse(content);
+    let body = frontmatter::extract_body(content);
+    let preview: String = body.chars().take(100).collect();
 
-fn build_metadata(filename: &str, notes_dir: &Path, tags: Vec<String>, body: &str) -> NoteMetadata {
-    let preview = if body.trim().chars().count() > 200 {
-        body.trim().chars().take(200).collect::<String>() + "…"
-    } else {
-        body.trim().to_string()
-    };
+    let created_at = crate::storage::file_manager::filename_to_datetime(filename)
+        .unwrap_or_default();
+
     NoteMetadata {
         filename: filename.to_string(),
-        path: notes_dir.join(filename).to_string_lossy().into_owned(),
-        created_at: file_manager::filename_to_created_at(filename),
-        tags,
+        title: String::new(),
+        tags: parsed.tags,
+        created_at: created_at.clone(),
+        updated_at: created_at,
         body_preview: preview,
     }
 }
 
-use std::path::Path;
-
 #[tauri::command]
-pub fn create_note(config: State<'_, Mutex<AppConfig>>) -> Result<NoteMetadata, String> {
-    let notes_dir = get_notes_dir(&config)?;
-    let filename = file_manager::generate_filename(&notes_dir)
-        .map_err(|e| err("STORAGE_WRITE_FAILED", e))?;
-    let content = frontmatter::serialize_empty();
-    let path = notes_dir.join(&filename);
-    file_manager::write_file(&path, content)
-        .map_err(|e| err("STORAGE_WRITE_FAILED", e))?;
-    Ok(build_metadata(&filename, &notes_dir, vec![], ""))
+pub fn create_note(
+    tags: Vec<String>,
+    config: State<'_, Mutex<AppConfig>>,
+) -> Result<NoteMetadata, String> {
+    let cfg = config.lock().map_err(|e| e.to_string())?;
+    let fm = FileManager::new(&cfg.notes_directory);
+    let filename = fm.generate_filename();
+    let content = frontmatter::generate(&tags, "");
+    fm.write(&filename, &content).map_err(|e| e.to_string())?;
+    Ok(build_metadata(&filename, &content))
 }
 
 #[tauri::command]
 pub fn save_note(
     filename: String,
-    content: String,
+    raw_content: String,
     config: State<'_, Mutex<AppConfig>>,
 ) -> Result<NoteMetadata, String> {
-    let notes_dir = get_notes_dir(&config)?;
-    let path = file_manager::validate_path(&filename, &notes_dir)
-        .map_err(|e| err("STORAGE_INVALID_FILENAME", e))?;
-    let parsed = frontmatter::parse(&content);
-    let normalized = frontmatter::reassemble(&parsed.tags, &parsed.body);
-    file_manager::write_file(&path, &normalized)
-        .map_err(|e| err("STORAGE_WRITE_FAILED", e))?;
-    Ok(build_metadata(&filename, &notes_dir, parsed.tags, &parsed.body))
+    let cfg = config.lock().map_err(|e| e.to_string())?;
+    let fm = FileManager::new(&cfg.notes_directory);
+    fm.write(&filename, &raw_content)
+        .map_err(|e| e.to_string())?;
+    Ok(build_metadata(&filename, &raw_content))
 }
 
 #[tauri::command]
 pub fn read_note(
     filename: String,
     config: State<'_, Mutex<AppConfig>>,
-) -> Result<serde_json::Value, String> {
-    let notes_dir = get_notes_dir(&config)?;
-    let path = file_manager::validate_path(&filename, &notes_dir)
-        .map_err(|e| err("STORAGE_INVALID_FILENAME", e))?;
-    if !path.exists() {
-        return Err(err("STORAGE_NOT_FOUND", format!("Not found: {}", filename)));
-    }
-    let content = file_manager::read_file(&path)
-        .map_err(|e| err("STORAGE_WRITE_FAILED", e))?;
-    let parsed = frontmatter::parse(&content);
-    Ok(serde_json::json!({"content": content, "tags": parsed.tags}))
+) -> Result<String, String> {
+    let cfg = config.lock().map_err(|e| e.to_string())?;
+    let fm = FileManager::new(&cfg.notes_directory);
+    fm.read(&filename).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn delete_note(
+pub fn list_notes(
+    offset: usize,
+    limit: usize,
+    tags: Option<Vec<String>>,
+    from_date: Option<String>,
+    to_date: Option<String>,
+    config: State<'_, Mutex<AppConfig>>,
+) -> Result<ListNotesResult, String> {
+    let cfg = config.lock().map_err(|e| e.to_string())?;
+    let fm = FileManager::new(&cfg.notes_directory);
+    let all_files = fm.list_files().map_err(|e| e.to_string())?;
+
+    let mut notes: Vec<NoteMetadata> = Vec::new();
+    for filename in &all_files {
+        let content = match fm.read(filename) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let meta = build_metadata(filename, &content);
+
+        // Filter by tags
+        if let Some(ref filter_tags) = tags {
+            if !filter_tags.iter().all(|t| meta.tags.contains(t)) {
+                continue;
+            }
+        }
+
+        // Filter by date range
+        if let Some(ref from) = from_date {
+            if meta.created_at < *from {
+                continue;
+            }
+        }
+        if let Some(ref to) = to_date {
+            if meta.created_at > *to {
+                continue;
+            }
+        }
+
+        notes.push(meta);
+    }
+
+    // Sort by created_at descending
+    notes.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+
+    let total_count = notes.len();
+    let paginated: Vec<NoteMetadata> = notes.into_iter().skip(offset).take(limit).collect();
+
+    Ok(ListNotesResult {
+        notes: paginated,
+        total_count,
+    })
+}
+
+#[tauri::command]
+pub fn search_notes(
+    query: String,
+    offset: usize,
+    limit: usize,
+    config: State<'_, Mutex<AppConfig>>,
+) -> Result<SearchNotesResult, String> {
+    let cfg = config.lock().map_err(|e| e.to_string())?;
+    let fm = FileManager::new(&cfg.notes_directory);
+    let results = search::full_scan(&fm, &query).map_err(|e| e.to_string())?;
+
+    let total_count = results.len();
+    let paginated: Vec<SearchResultEntry> = results.into_iter().skip(offset).take(limit).collect();
+
+    Ok(SearchNotesResult {
+        results: paginated,
+        total_count,
+    })
+}
+
+#[tauri::command]
+pub fn trash_note(
     filename: String,
     config: State<'_, Mutex<AppConfig>>,
-) -> Result<serde_json::Value, String> {
-    let notes_dir = get_notes_dir(&config)?;
-    let path = file_manager::validate_path(&filename, &notes_dir)
-        .map_err(|e| err("STORAGE_INVALID_FILENAME", e))?;
-    if !path.exists() {
-        return Err(err("STORAGE_NOT_FOUND", format!("Not found: {}", filename)));
-    }
-    trash::delete(&path).map_err(|e| err("TRASH_FAILED", e))?;
-    Ok(serde_json::json!({"success": true}))
+) -> Result<(), String> {
+    let cfg = config.lock().map_err(|e| e.to_string())?;
+    let fm = FileManager::new(&cfg.notes_directory);
+    let path = fm.file_path(&filename);
+    trash::delete(&path).map_err(|e| format!("TrashNotAvailable: {}", e))
 }
 
 #[tauri::command]
 pub fn force_delete_note(
     filename: String,
     config: State<'_, Mutex<AppConfig>>,
-) -> Result<serde_json::Value, String> {
-    let notes_dir = get_notes_dir(&config)?;
-    let path = file_manager::validate_path(&filename, &notes_dir)
-        .map_err(|e| err("STORAGE_INVALID_FILENAME", e))?;
-    if !path.exists() {
-        return Err(err("STORAGE_NOT_FOUND", format!("Not found: {}", filename)));
-    }
-    std::fs::remove_file(&path).map_err(|e| err("STORAGE_WRITE_FAILED", e))?;
-    Ok(serde_json::json!({"success": true}))
-}
-
-#[tauri::command]
-pub fn list_notes(
-    from_date: Option<String>,
-    to_date: Option<String>,
-    tags: Vec<String>,
-    limit: u32,
-    offset: u32,
-    config: State<'_, Mutex<AppConfig>>,
-) -> Result<ListNotesResult, String> {
-    let notes_dir = get_notes_dir(&config)?;
-    let files = file_manager::list_md_files(&notes_dir)
-        .map_err(|e| err("STORAGE_WRITE_FAILED", e))?;
-
-    let mut all: Vec<NoteMetadata> = Vec::new();
-    for filename in &files {
-        if !file_manager::filename_in_range(
-            filename,
-            from_date.as_deref(),
-            to_date.as_deref(),
-        ) {
-            continue;
-        }
-        let path = notes_dir.join(filename);
-        let content = match file_manager::read_file(&path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-        let parsed = frontmatter::parse(&content);
-        if !tags.is_empty() && !tags.iter().any(|t| parsed.tags.contains(t)) {
-            continue;
-        }
-        all.push(build_metadata(filename, &notes_dir, parsed.tags, &parsed.body));
-    }
-
-    let total_count = all.len() as u32;
-    let notes: Vec<NoteMetadata> = all
-        .into_iter()
-        .skip(offset as usize)
-        .take(limit as usize)
-        .collect();
-
-    Ok(ListNotesResult { notes, total_count })
-}
-
-#[tauri::command]
-pub fn search_notes(
-    query: String,
-    from_date: Option<String>,
-    to_date: Option<String>,
-    tags: Vec<String>,
-    limit: u32,
-    offset: u32,
-    config: State<'_, Mutex<AppConfig>>,
-) -> Result<SearchNotesResult, String> {
-    let notes_dir = get_notes_dir(&config)?;
-    let tag_filter = if tags.is_empty() { None } else { Some(tags.as_slice()) };
-    let matches = search::full_scan(
-        &notes_dir,
-        &query,
-        from_date.as_deref(),
-        to_date.as_deref(),
-        tag_filter,
-    )
-    .map_err(|e| err("STORAGE_WRITE_FAILED", e))?;
-
-    let total_count = matches.len() as u32;
-    let entries: Vec<SearchResultEntry> = matches
-        .into_iter()
-        .skip(offset as usize)
-        .take(limit as usize)
-        .map(|m| {
-            let metadata = build_metadata(
-                &m.filename,
-                &notes_dir,
-                m.tags,
-                &m.body_preview,
-            );
-            SearchResultEntry {
-                metadata,
-                snippet: m.snippet,
-                highlights: m.highlights,
-            }
-        })
-        .collect();
-
-    Ok(SearchNotesResult {
-        entries,
-        total_count,
-    })
-}
-
-#[tauri::command]
-pub fn list_all_tags(config: State<'_, Mutex<AppConfig>>) -> Result<Vec<String>, String> {
-    let notes_dir = get_notes_dir(&config)?;
-    let files = file_manager::list_md_files(&notes_dir)
-        .map_err(|e| err("STORAGE_WRITE_FAILED", e))?;
-
-    let mut all_tags = std::collections::BTreeSet::new();
-    for filename in &files {
-        let path = notes_dir.join(filename);
-        if let Ok(content) = file_manager::read_file(&path) {
-            let parsed = frontmatter::parse(&content);
-            for tag in parsed.tags {
-                all_tags.insert(tag);
-            }
-        }
-    }
-    Ok(all_tags.into_iter().collect())
+) -> Result<(), String> {
+    let cfg = config.lock().map_err(|e| e.to_string())?;
+    let fm = FileManager::new(&cfg.notes_directory);
+    fm.delete(&filename).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn move_notes(
-    old_notes_dir: String,
-    new_notes_dir: String,
-) -> Result<serde_json::Value, String> {
-    let old = PathBuf::from(&old_notes_dir);
-    let new = PathBuf::from(&new_notes_dir);
-    let mut moved = 0u32;
-    let mut skipped = 0u32;
+    from_dir: String,
+    to_dir: String,
+) -> Result<usize, String> {
+    let from_fm = FileManager::new(&from_dir);
+    let to_fm = FileManager::new(&to_dir);
 
-    if let Ok(entries) = std::fs::read_dir(&old) {
-        for entry in entries.filter_map(|e| e.ok()) {
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-            if !file_manager::is_valid_filename(&name_str) {
-                continue;
-            }
-            let dest = new.join(&name);
-            if dest.exists() {
-                skipped += 1;
-                continue;
-            }
-            if std::fs::rename(entry.path(), &dest).is_ok() {
-                moved += 1;
-            } else {
-                skipped += 1;
-            }
-        }
+    to_fm.ensure_directory().map_err(|e| e.to_string())?;
+
+    let files = from_fm.list_files().map_err(|e| e.to_string())?;
+    let mut moved = 0;
+
+    for filename in &files {
+        let content = from_fm.read(filename).map_err(|e| e.to_string())?;
+        to_fm.write(filename, &content).map_err(|e| e.to_string())?;
+        from_fm.delete(filename).map_err(|e| e.to_string())?;
+        moved += 1;
     }
-    Ok(serde_json::json!({"moved": moved, "skipped": skipped}))
+
+    Ok(moved)
 }

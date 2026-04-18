@@ -1,41 +1,62 @@
 import {
   ViewPlugin,
   Decoration,
+  EditorView,
   type DecorationSet,
-  type EditorView,
   type ViewUpdate,
 } from "@codemirror/view";
+import { RangeSetBuilder } from "@codemirror/state";
 
-const frontmatterMark = Decoration.line({ class: "cm-frontmatter-line" });
+const frontmatterDeco = Decoration.line({
+  attributes: { class: "cm-frontmatter-line" },
+});
 
-class FrontmatterPlugin {
-  decorations: DecorationSet;
-  constructor(view: EditorView) {
-    this.decorations = this.build(view);
+function buildDecorations(view: EditorView): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>();
+  const doc = view.state.doc;
+  const text = doc.toString();
+
+  // Check if doc starts with ---
+  if (!text.startsWith("---\n")) return builder.finish();
+
+  // Find closing ---
+  const closeIdx = text.indexOf("\n---\n", 4);
+  if (closeIdx < 0) return builder.finish();
+
+  const endPos = closeIdx + 5; // after `\n---\n`
+
+  // Add decoration to each line in frontmatter range
+  for (let pos = 0; pos < endPos; ) {
+    const line = doc.lineAt(pos);
+    builder.add(line.from, line.from, frontmatterDeco);
+    pos = line.to + 1;
   }
-  update(update: ViewUpdate) {
-    if (update.docChanged || update.viewportChanged) {
-      this.decorations = this.build(update.view);
-    }
-  }
-  build(view: EditorView): DecorationSet {
-    const text = view.state.doc.toString();
-    const match = text.match(/^---\n[\s\S]*?\n---/);
-    if (!match) return Decoration.none;
-    const endPos = match[0].length;
-    const decorations: ReturnType<typeof frontmatterMark.range>[] = [];
-    for (let pos = 0; pos <= endPos; ) {
-      const line = view.state.doc.lineAt(pos);
-      decorations.push(frontmatterMark.range(line.from));
-      if (line.to >= endPos) break;
-      pos = line.to + 1;
-    }
-    return Decoration.set(decorations);
-  }
+
+  return builder.finish();
 }
 
-export function frontmatterDecoration() {
-  return ViewPlugin.fromClass(FrontmatterPlugin, {
-    decorations: (v) => v.decorations,
-  });
+export function frontmatterHighlight() {
+  return [
+    ViewPlugin.fromClass(
+      class {
+        decorations: DecorationSet;
+        constructor(view: EditorView) {
+          this.decorations = buildDecorations(view);
+        }
+        update(update: ViewUpdate) {
+          if (update.docChanged || update.viewportChanged) {
+            this.decorations = buildDecorations(update.view);
+          }
+        }
+      },
+      {
+        decorations: (v) => v.decorations,
+      }
+    ),
+    EditorView.baseTheme({
+      ".cm-frontmatter-line": {
+        backgroundColor: "var(--frontmatter-bg)",
+      },
+    }),
+  ];
 }

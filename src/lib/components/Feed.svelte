@@ -1,175 +1,141 @@
 <script lang="ts">
-  import { onMount, afterUpdate } from "svelte";
-  import { notes, prependNote, removeNote, updateNote } from "$lib/stores/notes";
-  import { filters } from "$lib/stores/filters";
+  import NoteCard from "./NoteCard.svelte";
+  import SearchBar from "./SearchBar.svelte";
+  import TagFilter from "./TagFilter.svelte";
+  import DateFilter from "./DateFilter.svelte";
+  import { notes, loadNotes, loadMoreNotes, searchNotesAction } from "$lib/stores/notes";
+  import { filters, setQuery, toggleTag, setDateRange, resetFilters } from "$lib/stores/filters";
   import { searchResults } from "$lib/stores/searchResults";
   import { totalCount } from "$lib/stores/totalCount";
-  import { listNotes, searchNotes, saveNote, readNote } from "$lib/utils/tauri-commands";
-  import type { NoteMetadata } from "$lib/utils/tauri-commands";
-  import NoteCard from "./NoteCard.svelte";
 
-  export let registerEditor: (filename: string, getContent: () => string) => void;
-  export let unregisterEditor: () => void;
-
-  let editingFilename: string | null = null;
-  let currentOffset = 0;
-  const PAGE_SIZE = 100;
-  let cardRefs: Record<string, NoteCard> = {};
-  let feedEl: HTMLDivElement;
-
-  export function handleNewNote(meta: NoteMetadata) {
-    switchEditTo(null).then(() => {
-      prependNote(meta);
-      editingFilename = meta.filename;
-    });
+  interface Props {
+    onOpenNote: (filename: string) => void;
   }
 
-  async function fetchNotes(f: typeof $filters) {
-    currentOffset = 0;
-    try {
-      if (f.query) {
-        const result = await searchNotes({
-          query: f.query,
-          from_date: f.fromDate,
-          to_date: f.toDate,
-          tags: f.tags,
-          limit: PAGE_SIZE,
-          offset: 0,
-        });
-        notes.set(result.entries.map((e) => e.metadata));
-        searchResults.set(result.entries);
-        totalCount.set(result.total_count);
-      } else {
-        const result = await listNotes({
-          from_date: f.fromDate,
-          to_date: f.toDate,
-          tags: f.tags,
-          limit: PAGE_SIZE,
-          offset: 0,
-        });
-        notes.set(result.notes);
-        searchResults.set(null);
-        totalCount.set(result.total_count);
-      }
-    } catch (e) {
-      console.error("Failed to fetch notes:", e);
-    }
+  let { onOpenNote }: Props = $props();
+
+  let allTags: string[] = $derived(
+    [...new Set($notes.flatMap((n) => n.tags))].sort()
+  );
+
+  let hasMore = $derived($notes.length < $totalCount && !$searchResults);
+
+  async function handleSearch(query: string) {
+    setQuery(query);
+    await searchNotesAction(query);
   }
 
-  $: fetchNotes($filters);
-
-  async function loadNextPage() {
-    currentOffset += PAGE_SIZE;
-    if (currentOffset >= $totalCount) return;
-    const f = $filters;
-    try {
-      if (f.query) {
-        const result = await searchNotes({
-          query: f.query,
-          from_date: f.fromDate,
-          to_date: f.toDate,
-          tags: f.tags,
-          limit: PAGE_SIZE,
-          offset: currentOffset,
-        });
-        notes.update((prev) => [...prev, ...result.entries.map((e) => e.metadata)]);
-        searchResults.update((prev) => (prev ? [...prev, ...result.entries] : result.entries));
-      } else {
-        const result = await listNotes({
-          from_date: f.fromDate,
-          to_date: f.toDate,
-          tags: f.tags,
-          limit: PAGE_SIZE,
-          offset: currentOffset,
-        });
-        notes.update((prev) => [...prev, ...result.notes]);
-      }
-    } catch (e) {
-      console.error("Failed to load next page:", e);
-    }
+  async function handleTagToggle(tag: string) {
+    toggleTag(tag);
+    await loadNotes();
   }
 
-  function handleScroll() {
-    if (!feedEl) return;
-    const { scrollHeight, scrollTop, clientHeight } = feedEl;
-    if (scrollHeight - scrollTop - clientHeight < 100) {
-      loadNextPage();
-    }
+  async function handleDateChange(from: string | null, to: string | null) {
+    setDateRange(from, to);
+    await loadNotes();
   }
 
-  async function switchEditTo(filename: string | null) {
-    if (editingFilename && editingFilename !== filename) {
-      const card = cardRefs[editingFilename];
-      if (card) {
-        await card.triggerSave();
-      }
-      unregisterEditor();
-    }
-    editingFilename = filename;
-  }
-
-  function handleRequestEdit(filename: string) {
-    switchEditTo(filename);
-  }
-
-  function handleSaved(e: CustomEvent<NoteMetadata | null>) {
-    if (e.detail) {
-      updateNote(e.detail);
-    }
-    unregisterEditor();
-    editingFilename = null;
-  }
-
-  function handleDeleted(filename: string) {
-    removeNote(filename);
-    if (editingFilename === filename) {
-      unregisterEditor();
-      editingFilename = null;
-    }
-  }
-
-  function handleGlobalClick(e: MouseEvent) {
-    if (!editingFilename) return;
-    const card = feedEl?.querySelector(`[data-filename="${editingFilename}"]`);
-    if (card && !card.contains(e.target as Node)) {
-      switchEditTo(null);
-    }
+  async function handleReset() {
+    resetFilters();
+    await loadNotes();
   }
 </script>
 
-<svelte:window on:mousedown={handleGlobalClick} />
+<div class="feed-container">
+  <div class="feed-toolbar">
+    <SearchBar onSearch={handleSearch} query={$filters.query} />
+    <div class="feed-filters">
+      <TagFilter
+        tags={allTags}
+        selectedTags={$filters.tags}
+        onToggle={handleTagToggle}
+      />
+      <DateFilter
+        fromDate={$filters.fromDate}
+        toDate={$filters.toDate}
+        onChange={handleDateChange}
+      />
+      <button class="reset-btn" onclick={handleReset}>Reset</button>
+    </div>
+  </div>
 
-<div class="feed" bind:this={feedEl} on:scroll={handleScroll}>
-  {#each $notes as note (note.filename)}
-    <NoteCard
-      bind:this={cardRefs[note.filename]}
-      metadata={note}
-      editing={editingFilename === note.filename}
-      searchEntry={$searchResults?.find((r) => r.metadata.filename === note.filename) ?? null}
-      on:requestEdit={() => handleRequestEdit(note.filename)}
-      on:saved={handleSaved}
-      on:deleted={() => handleDeleted(note.filename)}
-      {registerEditor}
-    />
-  {/each}
-  {#if $notes.length === 0}
-    <div class="empty">No notes found. Press Cmd+N / Ctrl+N to create one.</div>
-  {/if}
+  <div class="feed-list">
+    {#if $searchResults}
+      {#each $searchResults as result (result.metadata.filename)}
+        <NoteCard
+          note={result.metadata}
+          matchedLine={result.matched_line}
+          onOpen={() => onOpenNote(result.metadata.filename)}
+        />
+      {:else}
+        <p class="feed-empty">No search results found.</p>
+      {/each}
+    {:else}
+      {#each $notes as note (note.filename)}
+        <NoteCard note={note} onOpen={() => onOpenNote(note.filename)} />
+      {:else}
+        <p class="feed-empty">No notes yet. Create one!</p>
+      {/each}
+      {#if hasMore}
+        <button class="load-more-btn" onclick={loadMoreNotes}>
+          Load more
+        </button>
+      {/if}
+    {/if}
+  </div>
 </div>
 
 <style>
-  .feed {
-    flex: 1;
-    overflow-y: auto;
-    padding: 16px;
+  .feed-container {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    height: 100%;
+    overflow: hidden;
   }
-  .empty {
+  .feed-toolbar {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .feed-filters {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .feed-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 16px;
+  }
+  .feed-empty {
     text-align: center;
-    color: var(--text-muted);
-    margin-top: 80px;
-    font-size: 15px;
+    color: var(--text-secondary);
+    padding: 40px 0;
+  }
+  .reset-btn {
+    padding: 4px 10px;
+    border-radius: var(--radius);
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+  }
+  .reset-btn:hover {
+    background: var(--surface-secondary);
+  }
+  .load-more-btn {
+    display: block;
+    width: 100%;
+    padding: 10px;
+    margin: 8px 0;
+    text-align: center;
+    border-radius: var(--radius);
+    color: var(--accent);
+    border: 1px solid var(--border);
+  }
+  .load-more-btn:hover {
+    background: var(--surface-secondary);
   }
 </style>

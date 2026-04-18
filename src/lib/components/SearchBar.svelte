@@ -1,52 +1,51 @@
 <script lang="ts">
-  import { filters } from "$lib/stores/filters";
+  import { debounce } from "$lib/utils/debounce";
 
-  let value = "";
-  let timer: ReturnType<typeof setTimeout> | null = null;
-
-  function handleInput() {
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(() => {
-      filters.update((f) => ({ ...f, query: value }));
-    }, 300);
+  interface Props {
+    query: string;
+    onSearch: (query: string) => void;
   }
 
-  function handleClear() {
-    value = "";
-    filters.update((f) => ({ ...f, query: "" }));
+  let { query, onSearch }: Props = $props();
+
+  const debouncedSearch = debounce((q: string) => {
+    onSearch(q);
+  }, 200);
+
+  function handleInput(e: Event) {
+    const target = e.target as HTMLInputElement;
+    debouncedSearch(target.value);
   }
 </script>
 
 <div class="search-bar">
   <input
-    type="text"
+    type="search"
     placeholder="Search notes..."
-    bind:value
-    on:input={handleInput}
+    value={query}
+    oninput={handleInput}
+    aria-label="Search notes"
+    data-testid="search-input"
   />
-  {#if value}
-    <button class="clear" on:click={handleClear}>✕</button>
-  {/if}
 </div>
 
 <style>
   .search-bar {
-    position: relative;
-    display: flex;
-    align-items: center;
+    width: 100%;
   }
   input {
     width: 100%;
-    padding: 6px 12px;
-    background: var(--bg);
+    padding: 8px 12px;
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: var(--radius);
+    background: var(--surface);
+    font-size: 0.9rem;
   }
-  input::placeholder { color: var(--text-muted); }
-  .clear {
-    position: absolute;
-    right: 8px;
-    color: var(--text-muted);
-    font-size: 12px;
+  input:focus {
+    border-color: var(--accent);
+    outline: none;
+  }
+  input::placeholder {
+    color: var(--text-secondary);
   }
 </style>
