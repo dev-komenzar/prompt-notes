@@ -32,7 +32,7 @@ describe('module:settings — E2E Tests', () => {
 
     expect(fs.existsSync(configPath)).toBe(true);
     const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    expect(config).toHaveProperty('notes_dir');
-    expect(typeof config.notes_dir).toBe('string');
+    expect(config).toHaveProperty('notes_directory');
+    expect(typeof config.notes_directory).toBe('string');
   });
 });

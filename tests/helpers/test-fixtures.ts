@@ -69,6 +69,6 @@ export function isValidNoteFilename(filename: string): boolean {
 
 export function writeTestConfig(baseDir: string, notesDir: string): void {
   const configPath = path.join(baseDir, 'config.json');
-  const config = { notes_dir: path.join(notesDir, 'notes') + '/' };
+  const config = { notes_directory: path.join(notesDir, 'notes') + '/' };
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
 }
