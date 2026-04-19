@@ -279,10 +279,10 @@ tags: [gpt, coding]
 
 | OS | パス |
 |---|---|
-| Linux | `~/.local/share/promptnotes/notes/` |
-| macOS | `~/Library/Application Support/promptnotes/notes/` |
+| Linux | `~/.local/share/com.promptnotes/notes/` |
+| macOS | `~/Library/Application Support/com.promptnotes/notes/` |
 
-初回起動時にディレクトリが存在しない場合は自動作成する。設定モーダルから任意のディレクトリに変更可能とする。
+デフォルトパスは ADR-010 で固定した Tauri bundle identifier `com.promptnotes` と `app_data_dir()` API から導出される。パス解決は `config/mod.rs` が `app_data_dir()` を唯一のエントリポイントとして使用し、`dirs::data_dir()` 等を用いた OS 別パスのハードコードは禁止する。初回起動時にディレクトリが存在しない場合は自動作成する。設定モーダルから任意のディレクトリに変更可能とし、変更フローは 2 段階確定（pick → apply）に従う（requirements §保存ディレクトリの変更 / `detail:storage_fileformat` §4.5 参照）。
 
 **設定ファイル**:
 
@@ -290,8 +290,8 @@ tags: [gpt, coding]
 
 | OS | 設定ファイルパス |
 |---|---|
-| Linux | `~/.local/share/promptnotes/config.json` |
-| macOS | `~/Library/Application Support/promptnotes/config.json` |
+| Linux | `~/.local/share/com.promptnotes/config.json` |
+| macOS | `~/Library/Application Support/com.promptnotes/config.json` |
 
 ```json
 {
@@ -306,9 +306,13 @@ tags: [gpt, coding]
 | `SettingsModal.svelte` | 設定モーダルダイアログ |
 
 - ヘッダーの ⚙️ ボタンから開く
-- 保存ディレクトリの変更フォームを提供する
-- ディレクトリ選択には Tauri の `dialog` プラグインを使用する
-- ディレクトリ変更後は即座に新ディレクトリ内の `.md` ファイルをスキャンしフィードに反映する
+- 保存ディレクトリの変更フォームを 2 段階確定（pick → apply）で提供する
+- ディレクトリ選択には Tauri の `dialog` プラグインを使用し、`pick_notes_directory` コマンド経由で OS ダイアログを起動する
+- 参照で選んだパスは pending 状態として UI 内部で保持し、Apply ボタン押下時に `set_config` を呼ぶまで `config.json` は書き換わらない
+- 既存ノート移動チェックボックス `[ ] 既存ノートを新ディレクトリへ移動する`（既定: オフ）を提供する。チェック時は Apply 押下前に二次確認ダイアログ「元のディレクトリから削除されます。元に戻せません。実行しますか？」を挟み、明示同意を得る
+- `set_config` レスポンスの `remaining_in_old` が `>0` の場合は「古いディレクトリに N 件残りました」トーストを表示する
+- 起動時にディレクトリが不在の場合、エラー種別（`ENOENT` / `EACCES` / `EIO`系 / `ENOTDIR`）に応じたメッセージと `[再試行] / [別のディレクトリを選ぶ] / [デフォルトに戻す]` の 3 択を表示する。デフォルトへの自動フォールバックは行わない（requirements 不可侵条項 4 参照）
+- ディレクトリ変更後は新ディレクトリ内の `.md` ファイルをスキャンしフィードに反映する
 - テーマ手動切り替え UI は設けない（AC-UI-07）
 
 #### module:ui — UI レイアウト・テーマ（フロントエンド）
@@ -348,7 +352,8 @@ tags: [gpt, coding]
 | `read_note` | `{ filename: string }` | `{ content: string, tags: string[] }` | ファイルを読み込み、body（ADR-008 定義）と frontmatter を返す |
 | `search_notes` | `{ query: string }` | `NoteMetadata[]` | 全文検索（ファイル全走査）の結果を返す |
 | `get_config` | なし | `{ notes_dir: string }` | 現在の設定を返す |
-| `set_config` | `{ notes_dir: string }` | `{ success: boolean }` | 設定を更新する |
+| `pick_notes_directory` | なし | `{ path: string \| null }` | OS ネイティブダイアログを起動してディレクトリを選ばせ、canonical 化した絶対パスを返す。キャンセル時は `null`。検証失敗時は `ConfigError` を投げる。このコマンドは `config.json` を書き換えない（pending 候補の取得のみ） |
+| `set_config` | `{ notes_dir: string, move_existing: boolean }` | `SetConfigResult` | 設定を 3 フェーズ（コピー → config atomic write → 旧削除）で更新する。`move_existing: false` の場合は既存ノートを一切触らない。`move_existing: true` の場合は `.md` のみ旧→新に移動（非 `.md` は対象外）。UI 側で移動前に二次確認ダイアログを挟むこと |
 | `copy_to_clipboard` | `{ text: string }` | `{ success: boolean }` | テキストをシステムクリップボードにコピーする |
 
 **`NoteMetadata` 型**:
@@ -361,6 +366,30 @@ interface NoteMetadata {
   timestamp: string;  // ファイル名から抽出した ISO 形式タイムスタンプ
 }
 ```
+
+**`SetConfigResult` 型**:
+
+```typescript
+interface SetConfigResult {
+  notes_dir: string;         // 確定した新 notes_dir の絶対パス
+  moved: number;             // Phase 3 で削除に成功したファイル数（move_existing: false なら 0）
+  remaining_in_old: number;  // Phase 3 で削除失敗したファイル数（0 が正常、>0 なら UI で通知）
+  old_dir: string | null;    // 旧ディレクトリに残骸があるときに UI 誘導用に返す
+}
+```
+
+**`ConfigError` 種別（Tauri invoke の失敗時に返る）**:
+
+| 種別 | 発生タイミング | UI 推奨対応 |
+|---|---|---|
+| `InvalidPath` | パスが絶対パス化/canonicalize できない | エラーメッセージ表示、`[別のディレクトリを選ぶ]` 誘導 |
+| `NotADirectory` | 指定パスがディレクトリでない | エラーメッセージ表示、再選択促し |
+| `NotWritable` | 書き込みプローブ失敗（権限・RO マウント・SELinux 等） | 権限確認を促すメッセージ |
+| `ReservedDirectory` | config.json を保持するディレクトリと同一選択 | 「設定ファイルと同一ディレクトリは選べません」表示 |
+| `SameDirectory` | 旧 == 新 | 無害として無視（UI は閉じる） |
+| `MoveConflict(filenames)` | `move_existing: true` で新側にファイル名衝突 | 衝突ファイル名リストを表示、手動解消を促す |
+| `CopyFailed(path, err)` | Phase 1 コピー失敗 | エラーメッセージ、新側ロールバック済み通知 |
+| `ConfigWriteFailed(err)` | Phase 2 config.json 書き込み失敗 | エラーメッセージ、新側ロールバック済み通知 |
 
 ### 2.4 データフロー
 

@@ -123,7 +123,7 @@ graph TB
         end
     end
 
-    FS_DISK["Local Filesystem<br/>~/.local/share/promptnotes/notes/<br/>~/Library/Application Support/promptnotes/notes/"]
+    FS_DISK["Local Filesystem<br/>~/.local/share/com.promptnotes/notes/<br/>~/Library/Application Support/com.promptnotes/notes/"]
 
     SC -->|"event: new-note"| HD
     HD --> FD
@@ -289,16 +289,70 @@ sequenceDiagram
     CmdConfig-->>TC: { notes_dir }
     TC-->>SM: current config
 
-    User->>SM: ディレクトリ選択 (dialog plugin)
-    SM->>TC: setConfig({ notes_dir: newPath })
-    TC->>CmdConfig: invoke("set_config", { notes_dir })
-    CmdConfig->>Conf: validate_directory(newPath)
-    Conf->>FS: check dir exists / create
-    FS-->>Conf: Ok
-    Conf->>FS: write config.json
-    FS-->>Conf: Ok
+    Note over User,SM: ① 参照 — pending 候補取得
+    User->>SM: [参照] ボタン押下
+    SM->>TC: pickNotesDirectory()
+    TC->>CmdConfig: invoke("pick_notes_directory")
+    CmdConfig->>CmdConfig: blocking_pick_folder (tauri-plugin-dialog)
+    alt ユーザーがキャンセル
+        CmdConfig-->>TC: null
+        TC-->>SM: null (何もしない)
+    else ユーザーが選択
+        CmdConfig->>Conf: validate_notes_directory(path)
+        Conf->>FS: canonicalize + 書き込みプローブ
+        alt 検証 NG
+            FS-->>Conf: Err
+            Conf-->>CmdConfig: ConfigError
+            CmdConfig-->>TC: ConfigError
+            TC-->>SM: エラー表示、pending リセット
+        else 検証 OK
+            FS-->>Conf: Ok
+            Conf-->>CmdConfig: canonical PathBuf
+            CmdConfig-->>TC: { path: canonical }
+            TC-->>SM: pending 候補として保持 (config.json 未更新)
+        end
+    end
+
+    Note over User,SM: ② 任意: 移動オプション選択 + 二次確認
+    User->>SM: [x] 既存ノートを新ディレクトリへ移動する
+    User->>SM: [Apply] ボタン押下
+    opt move_existing == true
+        SM->>User: 二次確認ダイアログ<br/>「元のディレクトリから削除されます。<br/>元に戻せません。実行しますか？」
+        User->>SM: [実行] (キャンセルなら中断)
+    end
+
+    Note over User,SM: ③ Apply — 3 フェーズで確定
+    SM->>TC: setConfig({ notes_dir, move_existing })
+    TC->>CmdConfig: invoke("set_config", { notes_dir, move_existing })
+    CmdConfig->>Conf: validate_notes_directory (TOCTOU 対策で再検証)
     Conf-->>CmdConfig: Ok
-    CmdConfig-->>TC: { success: true }
+    alt move_existing == true
+        Note over CmdConfig,FS: Phase 1: コピー
+        CmdConfig->>FileMgr: list old notes_dir/*.md
+        FileMgr-->>CmdConfig: old_files
+        CmdConfig->>FileMgr: 新側で衝突検出
+        alt 衝突あり
+            FileMgr-->>CmdConfig: MoveConflict(filenames)
+            CmdConfig-->>TC: ConfigError::MoveConflict
+        else 衝突なし
+            loop 各 .md ファイル
+                CmdConfig->>FS: copy(old/, new/)
+            end
+        end
+    end
+    Note over CmdConfig,FS: Phase 2: config.json atomic write (point of no return)
+    CmdConfig->>FS: write config.json.tmp → fsync → rename
+    FS-->>CmdConfig: Ok
+    CmdConfig->>Conf: update AppConfig state
+    CmdConfig->>FileMgr: update notes_dir
+    alt move_existing == true
+        Note over CmdConfig,FS: Phase 3: 旧 .md 削除 (Warning 止まり)
+        loop 各 .md ファイル
+            CmdConfig->>FS: remove_file(old/file.md)
+        end
+    end
+    CmdConfig-->>TC: SetConfigResult { notes_dir, moved, remaining_in_old, old_dir }
+    TC-->>SM: 新 config + 残留件数
 
     SM->>TC: listNotes({ from_date: 7days_ago, limit: 100, offset: 0 })
     TC->>CmdNotes: invoke("list_notes", { from_date, limit, offset })
@@ -309,11 +363,14 @@ sequenceDiagram
     CmdNotes->>CmdNotes: total_count 記録後 offset/limit でスライス
     CmdNotes-->>TC: ListNotesResult { notes, total_count }
     TC-->>SM: refresh feed
+    opt remaining_in_old > 0
+        SM->>User: トースト「古いディレクトリに N 件残りました」
+    end
 ```
 
 **実装境界の説明:**
 
-設定変更フローにおいて、フロントエンド（`SettingsModal.svelte`）はディレクトリパスの文字列値を取得するために Tauri の `dialog` プラグインを使用するが、パスの解決・存在確認・ディレクトリ作成・`config.json` への書き込みはすべて Rust バックエンド（`config/mod.rs`）が実行する。フロントエンド単独でのファイルパス操作（パス結合、存在チェック等）は禁止されており、この制約は `tauri-commands.ts` が `set_config` コマンドのみを公開することで構造的に強制される。
+設定変更フローは 2 段階確定（pick → apply）で構成される。フロントエンド（`SettingsModal.svelte`）はディレクトリパスの文字列値を取得するために Tauri の `dialog` プラグインを `pick_notes_directory` コマンド経由で使用するが、パスの解決・canonicalize・存在確認・書き込みプローブ・`config.json` への書き込み・既存ノート移動はすべて Rust バックエンド（`config/mod.rs` と `commands/config.rs`）が実行する。フロントエンド単独でのファイルパス操作（パス結合、存在チェック等）は禁止されており、この制約は `tauri-commands.ts` が `get_config` / `pick_notes_directory` / `set_config` の 3 コマンドのみを公開することで構造的に強制される。`pick_notes_directory` は `config.json` を書き換えず pending 候補を返すのみで、確定は `set_config` が担う。この分離により、参照だけして Apply しなかった場合に設定が変化しない性質を保証する。
 
 ## 3. Ownership Boundaries
 
@@ -324,7 +381,7 @@ sequenceDiagram
 | ファイル / コンポーネント | 所有モジュール | 責務の単一所有 |
 |---|---|---|
 | `src-tauri/src/main.rs` | `module:shell` | Tauri アプリケーション初期化、プラグイン登録、allowlist 適用 |
-| `src-tauri/src/commands/notes.rs` | `module:storage` | ノート CRUD の IPC エントリポイント（`create_note`, `save_note`, `delete_note`, `force_delete_note`, `read_note`, `list_notes`, `search_notes`, `list_all_tags`, `move_notes`） |
+| `src-tauri/src/commands/notes.rs` | `module:storage` | ノート CRUD の IPC エントリポイント（`create_note`, `save_note`, `delete_note`, `force_delete_note`, `read_note`, `list_notes`, `search_notes`, `list_all_tags`）。既存ノートの移動は `module:settings` の `set_config` に統合されており、本モジュールは移動 IPC を公開しない |
 | `src-tauri/src/commands/config.rs` | `module:settings` | 設定読み書きの IPC エントリポイント（`get_config`, `set_config`） |
 | `src-tauri/src/commands/clipboard.rs` | `module:shell` | クリップボード操作の IPC エントリポイント（`copy_to_clipboard`） |
 | `src-tauri/src/storage/file_manager.rs` | `module:storage` | ファイル CRUD 操作（唯一のファイルシステム書き込みポイント） |
@@ -411,29 +468,60 @@ sequenceDiagram
 
 ### 4.2 設定変更の安全性とファイル移動
 
-`module:settings` における保存ディレクトリ変更は以下の手順で処理する。
+`module:settings` における保存ディレクトリ変更は 2 段階確定（pick → apply）で処理する。途中で失敗した場合の状態遷移は `config.json` の atomic write を唯一の不可逆境界（point of no return）として設計される。
 
-**ステップ 1: ディレクトリ検証（Rust バックエンド）**
+**ステップ 1: 参照（pick）— pending 候補取得**
 
-1. `set_config` コマンドが新しい `notes_dir` パスを受信
-2. `config/mod.rs` がパスを正規化（`canonicalize`）し、ディレクトリの存在を確認。存在しない場合は作成を試行
-3. 書き込み権限を検証（テストファイルの作成・削除）
-4. `config.json` に新しいパスを書き込み
-5. 成功レスポンスを返却
+1. ユーザーが `SettingsModal.svelte` の `[参照]` ボタンを押下
+2. `pick_notes_directory` IPC コマンドを発行
+3. Rust 側が `tauri-plugin-dialog` の `blocking_pick_folder` を起動
+4. ユーザーがキャンセル → `null` を返却（`config.json` 未変更、UI は元の状態を保持）
+5. ユーザーが選択 → `validate_notes_directory(path)` を実行
+   - 失敗 → `ConfigError` を返却、`SettingsModal.svelte` がエラー表示。`config.json` 未変更
+   - 成功 → canonical 化した `PathBuf` を返却。`SettingsModal.svelte` 内の `pendingPath` ステートに保持（`config.json` 未変更）
+6. **重要**: この段階では `config.json` は一切書き換わらない。`[参照] したが Apply しなかった` ケースで設定が変化しないことを保証する。
 
-**ステップ 2: ファイル移動の確認（フロントエンド → バックエンド）**
+**ステップ 2: 移動オプション選択と二次確認（UI 責務）**
 
-`set_config` 成功後、フロントエンドはユーザーに確認ダイアログを表示する。
+1. ユーザーが `[ ] 既存ノートを新ディレクトリへ移動する` チェックボックスを任意で選択（既定: オフ）
+2. `[Apply]` ボタンを押下
+3. チェックボックスがオンの場合、`SettingsModal.svelte` が二次確認ダイアログを表示:
+   > 既存ノート N 件を新ディレクトリへ移動します。
+   > 元のディレクトリからは削除され、元に戻せません。
+   > 実行しますか？  [キャンセル] [実行]
+4. `[キャンセル]` → pending 状態を保持したまま UI に戻る（Apply はなかったことになる）
+5. `[実行]` → `set_config` 発行へ進む
 
-```
-「ノートを新しいディレクトリに移動しますか？」
-[移動する] / [移動しない]
-```
+**ステップ 3: Apply — 3 フェーズで確定**
 
-- **「移動する」**: `move_notes` IPC コマンドを発行。Rust バックエンドが旧ディレクトリの `.md` ファイルを新ディレクトリに移動する。同名ファイルが存在する場合はスキップ（上書きしない）。移動結果 `{ moved: u32, skipped: u32 }` を返却し、スキップがあった場合はフロントエンドが件数通知（例:「12件移動、2件スキップ」）を表示する。
-- **「移動しない」**: `config.json` のみ更新済みのため、新ディレクトリ内の既存 `.md` ファイルを `list_notes` で読み込む。
+`set_config({ notes_dir, move_existing })` は以下の 3 フェーズを Rust バックエンドが実行する。詳細は `detail:storage_fileformat` §4.5 を参照。
 
-フロントエンドはパスの妥当性検証を一切行わない。`SettingsModal.svelte` は Tauri `dialog` プラグインから取得したパス文字列をそのまま `set_config` に渡す。
+| フェーズ | 内容 | 失敗時の状態 |
+|---|---|---|
+| Phase 0 | `validate_notes_directory` 再実行（TOCTOU 対策） | 旧 `config.json` のまま、ConfigError 返却 |
+| Phase 1 | `move_existing: true` の場合のみ、旧 `notes_dir/*.md` を新 `notes_dir` へコピー | 新側の途中コピーを削除してロールバック。旧は無傷 |
+| Phase 2 | `config.json` を atomic write (tmp → fsync → rename) ← **point of no return** | 新側コピーを削除して status quo 復元 |
+| Phase 3 | `move_existing: true` の場合のみ、旧 `notes_dir/*.md` を削除 | `remaining_in_old` にカウント（Error ではなく Warning 相当） |
+
+**ファイル移動の扱い（`move_existing` フラグ単独制御）**
+
+旧 `move_notes` IPC コマンドの構想は廃止する。移動と設定更新は `set_config` の単一トランザクションに統合する。
+
+- **`move_existing: false`（既定）**: 旧ディレクトリのファイルは一切触らない。新ディレクトリが空の場合はフィードが空から始まる。旧ディレクトリを後で再選択すれば元のデータに戻れる
+- **`move_existing: true`**: 3 フェーズで .md ファイルのみ移動。非 `.md` ファイル（Obsidian 添付画像・`.canvas` 等）は対象外で旧ディレクトリに残る
+- **衝突検出**: Phase 1 で新側に同名 `.md` が存在する場合 `ConfigError::MoveConflict(filenames)` を返して中止。ユーザーに衝突ファイル名を表示し、手動解消を促す
+- **部分削除失敗**: Phase 3 で旧 `.md` の削除に失敗したファイル数を `SetConfigResult.remaining_in_old` で返却。UI がトースト「古いディレクトリに N 件残りました」を表示
+- **同一ディレクトリ選択**: `ConfigError::SameDirectory` として早期リターン（副作用なし）
+
+フロントエンドはパスの妥当性検証を一切行わない。`SettingsModal.svelte` は `pick_notes_directory` が返した canonical パスをそのまま `pendingPath` に保持し、`set_config` に渡す。Rust バックエンドが Apply 時点で再度 `validate_notes_directory` を呼び直すことで、参照から Apply までの間に発生したディスク状態変化（TOCTOU）を吸収する。
+
+**起動時ディレクトリ不在の扱い**
+
+アプリ起動時に `notes_dir` へのアクセスが失敗した場合、`config/mod.rs` は errno を 4 種（`ENOENT` / `EACCES` / `EIO`系 / `ENOTDIR`）に分類して UI に通知する。自動でデフォルトにフォールバックすることは禁止（requirements 不可侵条項 4）。`SettingsModal.svelte` または起動時エラーモーダルが以下の 3 択を表示する:
+
+- `[再試行]` — 一時的不在（外付けディスクの再接続等）のリカバリパス。`get_config` を再発行して再検証
+- `[別のディレクトリを選ぶ]` — `pick_notes_directory` フローへ遷移
+- `[デフォルトに戻す]` — ユーザー明示同意を経て `config.json` をデフォルト値で上書き
 
 ### 4.3 CodeMirror 6 インスタンス管理
 
@@ -466,7 +554,7 @@ Svelte の reactive store を使用し、コンポーネント間の状態共有
 |---|---|---|---|
 | `notes` (`notes.ts`) | `Writable<NoteMetadata[]>` | `list_notes` / `search_notes` レスポンス受信時、`create_note` / `save_note` / `delete_note` 成功時 | `Feed.svelte`, `NoteCard.svelte` |
 | `filters` (`filters.ts`) | `Writable<{ fromDate: string, toDate: string, tags: string[], query: string }>` | `DateFilter`, `TagFilter`, `SearchBar` の UI 操作時 | `Feed.svelte`（フィルタ変更で `list_notes` / `search_notes` を再発行） |
-| `config` (`config.ts`) | `Writable<{ notes_dir: string }>` | `get_config` レスポンス受信時、`set_config` 成功時 | `SettingsModal.svelte` |
+| `config` (`config.ts`) | `Writable<{ notes_dir: string, pendingPath: string \| null, moveExisting: boolean, lastResult: SetConfigResult \| null }>` | `get_config` レスポンス受信時に `notes_dir` 更新。`pick_notes_directory` レスポンス受信時に `pendingPath` 更新（参照段階、`notes_dir` は未変更）。`set_config` 成功時に `notes_dir` / `lastResult` 更新 + `pendingPath: null` リセット。`lastResult.remaining_in_old > 0` の場合は UI がトースト表示 | `SettingsModal.svelte` |
 
 `filters` store の変更は `Feed.svelte` の reactive ブロック（`$:` ステートメント）で検知し、対応する IPC コマンドを自動発行する。デフォルト値はアプリ起動時に `fromDate` を 7 日前の `00:00:00`、`toDate` を現在日時に設定する。
 
@@ -554,13 +642,13 @@ interface TauriCommandError {
 
 | 項目 | Linux | macOS |
 |---|---|---|
-| デフォルト保存ディレクトリ | `~/.local/share/promptnotes/notes/` | `~/Library/Application Support/promptnotes/notes/` |
-| 設定ファイルパス | `~/.local/share/promptnotes/config.json` | `~/Library/Application Support/promptnotes/config.json` |
+| デフォルト保存ディレクトリ | `~/.local/share/com.promptnotes/notes/` | `~/Library/Application Support/com.promptnotes/notes/` |
+| 設定ファイルパス | `~/.local/share/com.promptnotes/config.json` | `~/Library/Application Support/com.promptnotes/config.json` |
 | グローバルショートカット | Ctrl+N | Cmd+N |
 | ビルド出力 | `.deb`, `.AppImage`, Flatpak | `.dmg`, Homebrew Cask |
 | E2E テスト実行 | `xvfb-run` で仮想ディスプレイ上 | ネイティブ実行 |
 
-パス解決には Tauri の `app_data_dir()` API を使用し、OS ごとのパス差異をアプリケーションコードから隔離する。`config/mod.rs` が `app_data_dir()` を唯一の呼び出し元とし、ハードコードされたパスは使用しない。
+パス解決には Tauri の `app_data_dir()` API を使用し、OS ごとのパス差異をアプリケーションコードから隔離する。ADR-010 で固定した bundle identifier `com.promptnotes` が `app_data_dir()` の戻り値を決定し、そこから派生する `<app_data_dir>/notes/` がデフォルト `notes_dir` となる。`config/mod.rs` が `app_data_dir()` を唯一の呼び出し元とし、`dirs::data_dir()` 等による OS 別パスのハードコード・identifier の迂回は禁止する。
 
 ### 4.10 ネットワークアクセス禁止の構造的強制
 

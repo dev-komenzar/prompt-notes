@@ -30,6 +30,5 @@ serde_yaml = "0.9"
 chrono = { version = "0.4", features = ["serde"] }
 regex = "1"
 trash = "5"
-dirs = "5"
 uuid = { version = "1", features = ["v4"] }
 thiserror = "1"

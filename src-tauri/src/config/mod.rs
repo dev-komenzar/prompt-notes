@@ -1,32 +1,17 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub notes_directory: String,
 }
 
-impl Default for AppConfig {
-    fn default() -> Self {
-        let dir = default_notes_directory();
-        Self {
-            notes_directory: dir,
-        }
-    }
-}
-
-fn default_notes_directory() -> String {
-    dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("promptnotes")
-        .join("notes")
-        .to_string_lossy()
-        .to_string()
-}
-
 impl AppConfig {
-    pub fn load() -> Self {
-        // For now, use defaults. Could load from a config file later.
-        Self::default()
+    pub fn from_app_data_dir(app_data_dir: &Path) -> Self {
+        let notes_directory = app_data_dir
+            .join("notes")
+            .to_string_lossy()
+            .to_string();
+        Self { notes_directory }
     }
 }

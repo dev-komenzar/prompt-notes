@@ -45,8 +45,8 @@ codd:
 
 | プラットフォーム | 配布形式 | 備考 |
 |---|---|---|
-| Linux | `.deb`, `.AppImage`, Flatpak | デフォルト保存ディレクトリ: `~/.local/share/promptnotes/notes/` |
-| macOS | `.dmg`, Homebrew Cask | デフォルト保存ディレクトリ: `~/Library/Application Support/promptnotes/notes/` |
+| Linux | `.deb`, `.AppImage`, Flatpak | デフォルト保存ディレクトリ: `~/.local/share/com.promptnotes/notes/` |
+| macOS | `.dmg`, Homebrew Cask | デフォルト保存ディレクトリ: `~/Library/Application Support/com.promptnotes/notes/` |
 
 Windows は対象外であり、ビルドターゲット・CI パイプライン・テストマトリクスに含めない。
 
@@ -72,7 +72,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 | ショートカット | Cmd+N / Ctrl+N で即座に新規ノート作成・フォーカス移動必須 | Sprint 1 で `tauri-plugin-global-shortcut` による `CmdOrCtrl+N` 登録を実装。Sprint 2 で新規カード生成→CodeMirror 6 フォーカスまでの 200ms 以内完了を E2E テストで検証 |
 | ストレージ | ファイル名 `YYYY-MM-DDTHHMMSS.md` 不変、frontmatter は YAML `tags` のみ、自動保存必須、ADR-008 body 意味論の往復冪等性 | Sprint 1 で `file_manager.rs`・`frontmatter.rs` を実装。ファイル名バリデーション正規表現・frontmatter スキーマ・自動保存トリガーを単体テストで検証。Rust 側 `#[cfg(test)] mod tests` で `parse → reassemble → parse` の往復冪等性を表明 |
 | フィード | デフォルト 7 日間フィルタ、降順表示、タグ/日付フィルタ・全文検索必須 | Sprint 3 で `Feed.svelte`・`SearchBar.svelte`・`TagFilter.svelte`・`DateFilter.svelte` と `storage/search.rs` を実装。フィルタリングロジックは Rust 側で実行 |
-| 保存ディレクトリ | Linux/macOS 別デフォルトパス、設定から変更可能 | Sprint 1 で `config/mod.rs` に `app_data_dir()` ベースのパス解決を実装。Sprint 4 で `SettingsModal.svelte` からのディレクトリ変更フローを実装 |
+| 保存ディレクトリ | Linux/macOS 別デフォルトパス（`com.promptnotes` identifier 経由）、設定から変更可能（2 段階確定・移動オプション明示同意必須・起動時自動フォールバック禁止） | Sprint 1 で `tauri.conf.json` の identifier を `com.promptnotes` に固定し、`config/mod.rs` に `app_data_dir()` ベースのパス解決（`dirs` クレート不使用）を実装。Sprint 4 で `SettingsModal.svelte` の 2 段階確定 UI、`pick_notes_directory` / `set_config` IPC コマンド、3 フェーズ移動フロー、起動時不在の 4 エラー分類と 3 択ダイアログを実装 |
 | ネットワーク禁止 | AI 呼び出し・クラウド同期はスコープ外で実装禁止 | Sprint 1 で `tauri.conf.json` に CSP `connect-src 'none'` を設定。Cargo.toml に HTTP クレート（`reqwest`, `hyper`）を含めない。package.json に `axios` 等を含めない |
 
 ### 技術スタック
@@ -111,16 +111,16 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 | # | 成果物 | ファイル | 詳細 |
 |---|---|---|---|
-| 1-1 | Tauri プロジェクト初期化 | `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `package.json` | ウィンドウサイズ 1280×720。capabilities 設定で `fs` プラグインの WebView 直接アクセスを禁止。CSP `connect-src 'none'` でネットワークリクエストをブロック。`Cargo.toml` に `reqwest`/`hyper` を含めない。`package.json` に `axios` 等を含めない |
-| 1-2 | `main.rs` エントリポイント | `src-tauri/src/main.rs` | Tauri Builder にプラグイン（`fs`, `clipboard-manager`, `dialog`, `global-shortcut`）を登録。IPC コマンド（`create_note`, `save_note`, `delete_note`, `force_delete_note`, `read_note`, `list_notes`, `search_notes`, `list_all_tags`, `move_notes`, `get_config`, `set_config`, `copy_to_clipboard`）を登録 |
+| 1-1 | Tauri プロジェクト初期化 | `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `package.json` | ウィンドウサイズ 1280×720。**`tauri.conf.json` の `identifier` を `com.promptnotes` に固定（ADR-010）**。capabilities 設定で `fs` プラグインの WebView 直接アクセスを禁止。CSP `connect-src 'none'` でネットワークリクエストをブロック。`Cargo.toml` に `reqwest`/`hyper` を含めない。`Cargo.toml` に `dirs` クレートを含めない（ADR-010 で identifier 経由のパス解決を義務化、`dirs::data_dir()` 等の迂回は禁止）。`package.json` に `axios` 等を含めない |
+| 1-2 | `main.rs` エントリポイント | `src-tauri/src/main.rs` | Tauri Builder にプラグイン（`fs`, `clipboard-manager`, `dialog`, `global-shortcut`）を登録。IPC コマンド（`create_note`, `save_note`, `delete_note`, `force_delete_note`, `read_note`, `list_notes`, `search_notes`, `list_all_tags`, `get_config`, `pick_notes_directory`, `set_config`, `copy_to_clipboard`）を登録。`move_notes` は廃止（移動は `set_config` に統合）|
 | 1-3 | `file_manager.rs` | `src-tauri/src/storage/file_manager.rs` | `generate_filename()`: `chrono::Local::now()` → `YYYY-MM-DDTHHMMSS.md` 形式。同一秒衝突時は 1 秒待機再生成。`validate_filename()`: 正規表現 `^\d{4}-\d{2}-\d{2}T\d{6}\.md$` + パスセパレータ検査 + `canonicalize` で `notes_dir` 配下検証。`write_file()`: 一時ファイル → `rename` のアトミック書き込み。`read_file()`, `delete_file()`: バリデーション後にファイル操作 |
 | 1-4 | `frontmatter.rs`（Rust 側 ADR-008 単一所有者） | `src-tauri/src/storage/frontmatter.rs` | `NoteFrontmatter { tags: Vec<String>, extra: HashMap<String, Value> }` を `serde_yaml` でパース/シリアライズ。未知フィールドは `#[serde(flatten)]` で保持。`parse(content: &str) -> ParsedNote { tags, body, extra }`: 閉じフェンス `\n---\n` 検出後、直後の区切り `\n` を frontmatter 側の責務として切り詰めて body 開始位置とする。`reassemble(tags: &[String], body: &str) -> String`: frontmatter（末尾 `\n` 付き）の後に区切り `\n` を 1 つ追加して body を連結し、`---\n<yaml>\n---\n\n<body>` 形式を保証。body 空時は末尾 `\n` を残す。空 frontmatter 高速生成: 固定文字列 `"---\ntags: []\n---\n\n"` を直接返却（ADR-008 の末尾空行 1 行を含む正規レイアウト）。`#[cfg(test)] mod tests` に `parse → reassemble → parse` の往復で `(tags, body)` が一致すること、N 回繰り返しで body 先頭に `\n` が累積しないこと（AC-STOR-06）を検証するテストを配置 |
 | 1-5 | `search.rs` スタブ | `src-tauri/src/storage/search.rs` | `full_scan()` のインターフェース定義と空実装（Sprint 3 で本実装） |
-| 1-6 | `config/mod.rs` | `src-tauri/src/config/mod.rs` | `AppConfig { notes_dir: String }` を `config.json` で永続化。`app_data_dir()` でOS別デフォルトパスを解決（Linux: `~/.local/share/promptnotes/`, macOS: `~/Library/Application Support/promptnotes/`）。`config.json` 不在時はデフォルト値で新規作成。`set_config` 時のディレクトリ検証: `canonicalize` → 存在確認 → `create_dir_all` → 書き込み権限テスト（`.promptnotes_write_test` ファイル作成・削除） |
+| 1-6 | `config/mod.rs` | `src-tauri/src/config/mod.rs` | `AppConfig { notes_dir: String }` を `config.json` で永続化。Tauri の `AppHandle::path().app_data_dir()` で OS 別デフォルトパスを解決（identifier `com.promptnotes` 経由で Linux: `~/.local/share/com.promptnotes/`, macOS: `~/Library/Application Support/com.promptnotes/`）。`dirs::data_dir()` の使用禁止。`config.json` 不在時はデフォルト値で新規作成。`validate_notes_directory` のスケルトン実装（Sprint 4 で 6 ステップを完成）。`set_config` 本体は Sprint 4 で 3 フェーズ実装に拡張する |
 | 1-7 | `commands/notes.rs` | `src-tauri/src/commands/notes.rs` | `NoteMetadata`, `ListNotesResult`, `SearchNotesResult`, `SearchResultEntry`, `HighlightRange`, `ListOptions` 構造体定義。`create_note`, `save_note`, `read_note`, `list_notes` の IPC コマンド実装。統一エラー型 `TauriCommandError { code: String, message: String }` |
 | 1-8 | `commands/config.rs` | `src-tauri/src/commands/config.rs` | `get_config`, `set_config` の IPC コマンド実装 |
 | 1-9 | `commands/clipboard.rs` スタブ | `src-tauri/src/commands/clipboard.rs` | `copy_to_clipboard` のインターフェース定義（Sprint 2 で本実装） |
-| 1-10 | `tauri-commands.ts` | `src/lib/utils/tauri-commands.ts` | 全 IPC コマンドの型安全ラッパー定義。TypeScript 型: `NoteMetadata`, `ListNotesResult`, `SearchNotesResult`, `SearchResultEntry`, `HighlightRange`, `AppConfig`, `TauriCommandError`。関数: `createNote()`, `saveNote()`, `deleteNote()`, `forceDeleteNote()`, `readNote()`, `listNotes()`, `searchNotes()`, `listAllTags()`, `moveNotes()`, `getConfig()`, `setConfig()`, `copyToClipboard()` |
+| 1-10 | `tauri-commands.ts` | `src/lib/utils/tauri-commands.ts` | 全 IPC コマンドの型安全ラッパー定義。TypeScript 型: `NoteMetadata`, `ListNotesResult`, `SearchNotesResult`, `SearchResultEntry`, `HighlightRange`, `AppConfig`, `SetConfigResult`, `TauriCommandError`。関数: `createNote()`, `saveNote()`, `deleteNote()`, `forceDeleteNote()`, `readNote()`, `listNotes()`, `searchNotes()`, `listAllTags()`, `getConfig()`, `pickNotesDirectory()`, `setConfig()`, `copyToClipboard()`。`moveNotes()` は廃止（`setConfig` の `move_existing` 引数に統合） |
 | 1-11 | `timestamp.ts` | `src/lib/utils/timestamp.ts` | `filenameToDate(filename: string): Date` — ファイル名 `YYYY-MM-DDTHHMMSS.md` をパースして `Date` オブジェクトに変換。`dateToFilenamePrefix(date: Date): string` — 日付を `YYYY-MM-DDTHHMMSS` 形式に変換（IPC パラメータ用） |
 | 1-12 | ESLint 設定 | `.eslintrc.json` | `no-restricted-imports`: `@tauri-apps/plugin-fs`（直接ファイルシステムアクセス禁止）、`@tauri-apps/plugin-clipboard-manager`（直接クリップボードアクセス禁止）。`no-restricted-globals`: `navigator.clipboard`（Web Clipboard API 禁止） |
 | 1-13 | グローバルショートカット登録 | `src-tauri/src/main.rs` | `tauri-plugin-global-shortcut` で `CmdOrCtrl+N` を登録し、`new-note` イベントを WebView に emit |
@@ -222,26 +222,34 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 #### Sprint 4: 設定画面・ディレクトリ変更・ファイル移動
 
-**目標:** 設定モーダルの実装、保存ディレクトリの変更フロー（Rust バックエンド経由の検証・永続化）、ファイル移動の確認ダイアログ。
+**目標:** 設定モーダルの 2 段階確定 UI 実装、保存ディレクトリの変更フロー（Rust バックエンド経由の検証・永続化・3 フェーズ移動）、移動オプションの明示同意ダイアログ、起動時ディレクトリ不在の 4 エラー分類対応。
 
 **成果物:**
 
 | # | 成果物 | ファイル | 詳細 |
 |---|---|---|---|
-| 4-1 | `SettingsModal.svelte` | `src/lib/components/SettingsModal.svelte` | ⚙️ ボタンで表示するモーダル。`getConfig()` で現在設定を取得・表示。Tauri `dialog` プラグインでディレクトリ選択 → パス文字列を `setConfig({ notes_dir })` で送信。パス解決・検証・書き込みはフロントエンドでは一切行わない |
-| 4-2 | `config.ts` store | `src/lib/stores/config.ts` | `Writable<{ notes_dir: string }>`。`getConfig` レスポンス / `setConfig` 成功時に更新 |
-| 4-3 | ファイル移動確認ダイアログ | `SettingsModal.svelte` | `setConfig` 成功後に「ノートを新しいディレクトリに移動しますか？」ダイアログ表示。「移動する」→ `moveNotes()` IPC → 結果通知（「12件移動、2件スキップ」）。「移動しない」→ 新ディレクトリの `listNotes()` で読み込み |
-| 4-4 | `move_notes` コマンド | `src-tauri/src/commands/notes.rs` | 旧ディレクトリの `.md` ファイルを新ディレクトリに移動。同名ファイル存在時はスキップ（上書きなし）。レスポンス: `{ moved: u32, skipped: u32 }` |
-| 4-5 | 設定変更後のフィード再読み込み | `SettingsModal.svelte` → `Feed.svelte` | ディレクトリ変更完了後にフィルタ store を維持したまま `listNotes()` を再発行し、新ディレクトリのノートを表示 |
+| 4-1 | `SettingsModal.svelte`（2 段階確定 UI） | `src/lib/components/SettingsModal.svelte` | ⚙️ ボタンで表示するモーダル。`getConfig()` で現在設定を取得・表示。`[参照]` ボタンで `pickNotesDirectory()` を呼び、返された canonical パスを `config` store の `pendingPath` に保持する（`config.json` 未更新）。`[ ] 既存ノートを新ディレクトリへ移動する` チェックボックスで `moveExisting` フラグを設定する。`[Apply]` 押下で `setConfig({ notes_dir, move_existing })` を発行し、確定する。参照前は Apply 無効 |
+| 4-2 | `config.ts` store | `src/lib/stores/config.ts` | `Writable<{ notes_dir: string, pendingPath: string \| null, moveExisting: boolean, lastResult: SetConfigResult \| null }>`。`getConfig` で `notes_dir` 更新、`pickNotesDirectory` で `pendingPath` 更新、`setConfig` 成功で `notes_dir` / `lastResult` 更新 + `pendingPath: null` リセット |
+| 4-3 | 移動オプションの二次確認ダイアログ | `SettingsModal.svelte` | `moveExisting: true` で Apply 押下時、Apply 発行前に「既存ノート N 件を新ディレクトリへ移動します。元のディレクトリからは削除され、元に戻せません。実行しますか？ [キャンセル] [実行]」を表示。キャンセルなら pending を保持したまま UI に戻る |
+| 4-4 | `pick_notes_directory` コマンド | `src-tauri/src/commands/config.rs` | `tauri-plugin-dialog::blocking_pick_folder` を起動（初期位置は現在の `notes_dir`）。キャンセル時 `null` 返却。選択時は `validate_notes_directory` を実行して canonical PathBuf を返却。`config.json` は書き換えない |
+| 4-5 | `set_config` 3 フェーズ実装 | `src-tauri/src/commands/config.rs`, `src-tauri/src/config/mod.rs` | Phase 0: validate_notes_directory 再実行（TOCTOU 対策）。Phase 1: `move_existing: true` の場合、衝突チェック後に旧→新へ `.md` コピー（失敗時は新側ロールバック）。Phase 2: config.json を atomic write（tmp → fsync → rename）。Phase 3: `move_existing: true` の場合、旧 `.md` を削除（部分失敗は `remaining_in_old` に計上、Error にしない）。`SetConfigResult { notes_dir, moved, remaining_in_old, old_dir }` を返却 |
+| 4-6 | `validate_notes_directory` の 6 ステップ実装 | `src-tauri/src/config/mod.rs` | (1) 絶対パス化、(2) canonicalize、(3) ディレクトリ判定、(4) 書き込みプローブ `.promptnotes-probe`、(5) config.json 配置ディレクトリとの同一禁止、(6) システムディレクトリへの警告フラグ付与（拒否はしない） |
+| 4-7 | 起動時ディレクトリ不在の 4 エラー分類 + 3 択 UI | `src-tauri/src/config/mod.rs`, `src/lib/components/StartupErrorModal.svelte` | errno を `ENOENT` / `EACCES` / `EIO`系 / `ENOTDIR` に分類し、対応するエラーメッセージと `[再試行] / [別のディレクトリを選ぶ] / [デフォルトに戻す]` の 3 択 UI を表示。自動フォールバックは行わない |
+| 4-8 | 設定変更後のフィード再読み込み | `SettingsModal.svelte` → `Feed.svelte` | Apply 完了後にフィルタ store を維持したまま `listNotes()` を再発行し、新ディレクトリのノートを表示。`lastResult.remaining_in_old > 0` の場合は「古いディレクトリに N 件残りました」トースト表示 |
 
 **検証基準:**
 
 | テスト種別 | 対象 | 基準 |
 |---|---|---|
-| 単体テスト (Rust) | `set_config` | 有効ディレクトリの設定成功。無効ディレクトリ（存在しない・書き込み不可）の拒否。`config.json` の永続化 |
-| 単体テスト (Rust) | `move_notes` | ファイル移動成功。同名ファイルのスキップ。移動件数・スキップ件数の正確性 |
-| E2E テスト | ディレクトリ変更フロー | ダイアログでディレクトリ選択 → 設定保存 → ファイル移動 → 新ディレクトリのノートがフィードに表示 |
-| E2E テスト | 無効ディレクトリ | 読み取り専用ディレクトリの選択 → エラーメッセージ表示 |
+| 単体テスト (Rust) | `validate_notes_directory` | 6 ステップそれぞれのエラーケース（InvalidPath / NotADirectory / NotWritable / ReservedDirectory）を網羅 |
+| 単体テスト (Rust) | `pick_notes_directory` | キャンセル時 `null` 返却。検証失敗時は `ConfigError`。成功時は canonical PathBuf |
+| 単体テスト (Rust) | `set_config` 3 フェーズ | Phase 1 失敗時の旧データ無傷検証。Phase 2 失敗時の新側クリーンアップ検証。Phase 3 部分失敗時の `remaining_in_old` 正確性 |
+| 単体テスト (Rust) | 衝突検出 | 新側に同名 `.md` がある場合 `MoveConflict(filenames)` を返却し、新側は変更されない |
+| 単体テスト (Rust) | 起動時 errno 分類 | モック errno `ENOENT` / `EACCES` / `EIO` / `ENOTDIR` ごとに正しい `ConfigError` 種別が返ること、自動でデフォルトに書き換わらないこと |
+| E2E テスト (AC-STOR-05) | 2 段階確定フロー | 参照直後は `config.json` 未変更。Apply 後のみ書き換わる |
+| E2E テスト (AC-STOR-05a) | 移動オプション | チェックボックス選択 + 二次確認後に旧→新へ `.md` のみ移動（非 `.md` は残る）、`SetConfigResult.moved == N` |
+| E2E テスト (AC-STOR-05b) | 衝突検出 | 衝突状態を UI で通知、新側は変更されない |
+| E2E テスト (AC-STOR-05c) | 起動時不在 | 4 エラー分類に応じたメッセージと 3 択 UI 表示、自動フォールバックなし |
 
 ---
 
@@ -258,7 +266,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 | 5-3 | フロントエンドエラーハンドリング | `tauri-commands.ts`, 各コンポーネント | `TauriCommandError` の `code` で分岐。`STORAGE_NOT_FOUND` → カードをフィードから除去。`STORAGE_WRITE_FAILED` → エラー表示。`STORAGE_FRONTMATTER_PARSE` → 該当ノートのタグ・スニペットを空として扱いフィード表示は継続。`CONFIG_INVALID_DIR` → 設定画面誘導。`TRASH_FAILED` → 完全削除確認ダイアログ。`CLIPBOARD_FAILED` → コピー失敗フィードバック。エラー `message` はコンソールに出力 |
 | 5-4 | ウィンドウクローズ時の自動保存 | `main.rs`, `App.svelte` | Tauri `close-requested` イベントをフック → `before-close` イベントを WebView に emit → フロントエンドが編集中コンテンツを `saveNote()` → 保存完了後にクローズ許可 |
 | 5-5 | 新規ノート作成デバウンス | `Header.svelte` | Cmd+N 連打対策: 500ms デバウンスで `createNote()` の重複呼び出しを防止 |
-| 5-6 | ディレクトリ不在時のフォールバック | `config/mod.rs` | `notes_dir` が起動時に無効（削除済み等）の場合、デフォルトパスにフォールバック + 警告ログ出力 |
+| 5-6 | エラーコード別エラーメッセージと UI 接続の統合 | `tauri-commands.ts`, `StartupErrorModal.svelte`, `SettingsModal.svelte` | Sprint 4 で実装した errno 4 分類の `CONFIG_DIR_*` エラーコードに対して、UI 側の 3 択ダイアログと `pick_notes_directory` / `set_config` 再呼び出しフローを配線する。Sprint 4 の実装が単体で完結するよう Sprint 5 では統合・リグレッション検証のみを行う。自動でデフォルトにフォールバックする従来案は破棄済み（requirements 不可侵条項 4） |
 
 **検証基準:**
 

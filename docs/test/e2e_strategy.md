@@ -100,7 +100,7 @@ it('AC-ED-01: editor engine is CodeMirror 6', async () => { ... });
 | `editor.spec.ts` | AC-ED-*, AC-EDIT-*, FC-SCOPE-01/02 |
 | `storage.spec.ts` | AC-STOR-* |
 | `navigation.spec.ts` | AC-NAV-* |
-| `settings.spec.ts` | AC-SET-* |
+| `settings.spec.ts` | AC-SET-*, AC-STOR-05, AC-STOR-05a, AC-STOR-05b, AC-STOR-05c (2 段階確定・移動オプション・衝突検出・起動時不在の 4 エラー分類) |
 | `platform.spec.ts` | AC-PLAT-* (Cmd/Ctrl 差分) |
 | `grid.spec.ts` | AC-FEED-* のうちレイアウト検証 |
 | `scope-exclusion.spec.ts` | FC-SCOPE-* (非スコープ機能の未実装確認) |
@@ -108,8 +108,9 @@ it('AC-ED-01: editor engine is CodeMirror 6', async () => { ... });
 ## 6. テストデータ方針
 
 - 各テストは `createTempNotesDir()` (`tests/helpers/test-fixtures.ts`) で **一時ディレクトリ** を生成し、`afterEach` で削除する
-- 本番ユーザーデータ (`~/.local/share/com.promptnotes.app/notes/` 等) は参照しない
+- 本番ユーザーデータ (`~/.local/share/com.promptnotes/notes/`、旧 `~/.local/share/com.promptnotes.app/notes/` 等) は参照しない
 - ファイル名規則 `YYYY-MM-DDTHHMMSS.md` の生成/検出は `listNotesOnDisk()` ヘルパ経由で確認する
+- 保存ディレクトリ変更系テスト（AC-STOR-05 系）は旧/新 2 つの一時ディレクトリを生成し、3 フェーズ実行後の各ディレクトリ状態（ファイル件数・`config.json` 内容・`SetConfigResult` 戻り値）を検証する
 
 ## 7. CI / ローカル実行の差分
 

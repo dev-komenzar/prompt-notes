@@ -104,12 +104,19 @@ codd:
 - **ファイル名規則**: `YYYY-MM-DDTHHMMSS.md`（例: `2026-04-04T143205.md`）。タイトルは不要でタイムスタンプのみ。
 - **ファイル構造**: YAML frontmatter（`tags` のみ）+ 本文。作成日はファイル名から取得する。
 - **デフォルト保存ディレクトリ**:
-  - Linux: `~/.local/share/promptnotes/notes/`
-  - macOS: `~/Library/Application Support/promptnotes/notes/`
-- **設定による変更**: 設定モーダルから任意のディレクトリに変更可能。
+  - Linux: `~/.local/share/com.promptnotes/notes/`
+  - macOS: `~/Library/Application Support/com.promptnotes/notes/`
+  - デフォルトパスは ADR-010 で固定する Tauri bundle identifier `com.promptnotes` と `app_data_dir()` から一意に導出される。`app_data_dir()` の返す `<DATA>/<identifier>/` に `notes/` を結合した結果が上記リテラルパスと一致することを不変条件とする。アプリケーションコードはこのデフォルト解決ロジックを `src-tauri/src/config/mod.rs` に集約し、他モジュールはこのデフォルト値を受け取るだけで自前で OS 別パスを組み立ててはならない。
+- **設定による変更**: 設定モーダルから任意のディレクトリに変更可能。ただし以下の不可侵条項を満たす:
+  1. **2 段階確定** — 保存ディレクトリの変更は「参照で候補を選ぶ（pending）」と「Apply で確定」の 2 ステップに分離する。参照した瞬間に `config.json` を書き換えてはならない。
+  2. **既存ノート移動は明示同意必須** — 旧ディレクトリから新ディレクトリへのノート移動は、ユーザーが明示的にチェックボックスで選択し、かつ二次確認ダイアログ「元のディレクトリから削除されます。元に戻せません。実行しますか？」に同意した場合に限り実行する。既定は「移動しない」であり、非 `.md` ファイルは常に対象外とする。
+  3. **移動は 3 フェーズで実行** — コピー（全件成功まで `config.json` を書き換えない）→ `config.json` を atomic write（tmp → fsync → rename）→ 旧 `.md` 削除。`config.json` 書き換えを唯一の不可逆境界（point of no return）とし、それ以前の失敗は旧ディレクトリを無傷のまま status quo に復元する。
+  4. **起動時にディレクトリが不在でも自動フォールバックしない** — errno を `ENOENT` / `EACCES` / `EIO`/`ENODEV`/`ESTALE` / `ENOTDIR` の 4 分類に分け、UI でそれぞれに応じたメッセージを表示した上で、ユーザーに `[再試行] / [別のディレクトリを選ぶ] / [デフォルトに戻す]` の 3 択を提示する。自動でデフォルトに戻す挙動は禁止する（一時的不在の外付けディスク/NFS のケースで設定が勝手に失われるため）。
+  5. **既存ノートの非改変原則** — 上記明示同意による移動オプション以外では、設定変更に伴ってユーザーのノートファイルを自動で移動・削除・改変してはならない。
 - **却下した選択肢**:
   - **SQLite** — 他ツールとの相互運用性が損なわれる。Git でのバージョン管理が困難。
   - **クラウドストレージ** — スコープ外（クラウド同期は明示的に含まない）。リリース不可制約により禁止。
+  - **コピー方式（旧を残す）を既定または唯一の選択肢にする** — ノートが 2 箇所に散在し、ユーザーが「どちらが正か」を判断する認知負荷が発生する。移動を選べることで「完全に引っ越す」ユースケースに対応しつつ、既定を「移動しない」にすることで誤操作事故を防ぐ。
 
 ### ADR-005: 検索方式 — ファイル全走査
 
@@ -205,6 +212,30 @@ codd:
     - `ignore`: `src/generated/**` を除外する（CoDD の `codd implement` が生成する中間成果物であり、`codd assemble` 前は本番コードから参照されないため）。
     - Svelte / Vite / Vitest プラグインを有効化する。
   - `src/routes/` は除外せず、knip が未使用として正しく検出する対象とする（ADR-007 で設置禁止が決定済み）。
+
+### ADR-010: Tauri bundle identifier の固定
+
+- **ステータス**: 確定（変更不可・リリース不可制約）
+- **決定日**: 2026-04-19
+- **コンテキスト**: Tauri の bundle identifier は `app_data_dir()` / `app_config_dir()` / `app_cache_dir()` の解決先ディレクトリ名を決定する中心的パラメータである。過去に `tauri.conf.json` の `identifier` が `com.promptnotes.app` / `com.promptnotes.desktop` の間で揺れ、加えて実装側が `app_data_dir()` を回避して `dirs::data_dir().join("promptnotes")` をハードコードする事象が発生した結果、`~/.local/share/` 配下に 3 つのデータディレクトリ（`com.promptnotes.app/` / `com.promptnotes.desktop/` / `promptnotes/`）が並立し、ノート資産が分散した。ADR-004 は「Linux: `~/.local/share/promptnotes/notes/`」というリテラルパスを要求しているが、identifier を固定せずに `app_data_dir()` を使用すると identifier 次第で解決先が変わり、リテラル要件と矛盾する。本 ADR は identifier を単一の上流決定として固定し、下流のパス解決・コード実装・インストーラ生成の全てがこの 1 点から導出されることを保証する。
+- **決定**: Tauri bundle identifier を `com.promptnotes` に固定する。
+  - `src-tauri/tauri.conf.json` の `identifier` フィールドの値は `com.promptnotes` とする。
+  - アプリケーションコードからのパス解決は Tauri の `app_data_dir()` / `app_config_dir()` / `app_cache_dir()` を唯一のエントリポイントとし、`dirs::data_dir()` 等の外部クレートで identifier を迂回してはならない。
+- **根拠**:
+  - `app_data_dir()` の返す `<DATA>/<identifier>/` が Linux で `~/.local/share/com.promptnotes/`、macOS で `~/Library/Application Support/com.promptnotes/` となり、ADR-004 のデフォルト保存ディレクトリ記述と完全に一致する。identifier を上流決定として固定することで、下流のリテラルパス・コード・インストーラ生成物が単一の決定点から導出される構造を確立する。
+  - リバース DNS 形式の 2 セグメント `com.promptnotes` はパッケージ署名・ストア登録・他プラットフォーム対応時の衝突リスクが十分低く、かつ `.app` / `.desktop` のような配布形式由来のサフィックスを含まないため、配布形態の変化で identifier が揺らぐ動機を排除できる。
+  - identifier をリリース後に変更すると `app_data_dir()` の解決先が切り替わり、既存ユーザーのノート・設定・WebView 状態（Cookie/LocalStorage/IndexedDB）が全て孤児化するため、**初回リリース前に確定させ以降は変更しない**ことをリリース不可制約として宣言する。
+- **却下した選択肢**:
+  - **`com.promptnotes.app`** — 過去の identifier だが、`.app` サフィックスが macOS の `.app` バンドル拡張子と紛らわしく、また「app でない配布形態（CLI、デーモン）」との区別ができなくなる。既にこの identifier で生成された `~/.local/share/com.promptnotes.app/` は WebView 状態のみを含む過渡的成果物として扱い、ノートは別途 `com.promptnotes/notes/` に移行する。
+  - **`com.promptnotes.desktop`** — 過去に一時的に使用されていたが、将来モバイル対応時に `.desktop` が desktop 版固有の識別子になってしまい、デバイス横断の設定共有ができなくなる。
+  - **identifier を `app_data_dir()` 回避でバイパス（`dirs::data_dir().join("promptnotes")` 等）** — ADR-004 のリテラル要件とは一見一致するが、Tauri の WebView キャッシュは identifier ベースで生成され続けるため、結局 2 箇所にデータが分散する。identifier を固定しない限り根本解決にならない。
+- **実装上の要件**:
+  - `src-tauri/tauri.conf.json` の `identifier` は `com.promptnotes` に設定する。
+  - `src-tauri/src/config/mod.rs` のデフォルト保存ディレクトリ解決は Tauri の `AppHandle::path().app_data_dir()` を唯一の呼び出し元とする。`dirs` クレート等を用いた OS 別パスのハードコードは禁止する。
+  - 過渡的成果物の扱い: 本 ADR 決定以前に `com.promptnotes.app/` / `com.promptnotes.desktop/` 下に生成されたディレクトリは、開発環境のクリーンアップで削除してよい。本番ユーザーに対してはマイグレーションコードを提供しない（初回リリース前決定のため該当ユーザー不在）。
+- **検証**:
+  - **Rust 統合テスト**: Tauri アプリ起動時の `app_data_dir()` 戻り値が `<DATA>/com.promptnotes/` で終わることをアサートするテストを追加する。
+  - **受入基準**: `docs/test/acceptance_criteria.md` の保存ディレクトリ解決セクションに「Linux 上で `~/.local/share/com.promptnotes/` が使用されること」を追加する。
 
 ---
 

@@ -26,8 +26,8 @@ codd:
   - targets:
     - module:storage
     - module:settings
-    reason: 'デフォルト保存ディレクトリは Linux: ~/.local/share/promptnotes/notes/、macOS: ~/Library/Application
-      Support/promptnotes/notes/。設定から任意ディレクトリに変更可能であること。'
+    reason: 'デフォルト保存ディレクトリは Linux: ~/.local/share/com.promptnotes/notes/、macOS: ~/Library/Application
+      Support/com.promptnotes/notes/ (ADR-010 で固定した identifier com.promptnotes から app_data_dir() 経由で導出)。設定から任意ディレクトリに変更可能。変更フローは 2 段階確定 (pick → apply)、既存ノート移動は明示同意必須、起動時不在は自動フォールバック禁止。'
   modules:
   - storage
   - settings
@@ -58,7 +58,7 @@ codd:
 | ファイル名は `YYYY-MM-DDTHHMMSS.md` 形式で確定。作成時タイムスタンプで不変。 | §2 の状態遷移図およびファイルライフサイクルで、ファイル名がノート作成時に一度だけ生成され、以降のすべての操作（編集・保存・検索）でファイル名が変更されないことを明示する。§4 でバリデーション正規表現と不変性の強制メカニズムを定義する。 |
 | frontmatter は YAML 形式、メタデータは `tags` のみ。作成日はファイル名から取得。追加フィールドの導入は要件変更が必要。 | §2 のファイルフォーマット図で frontmatter スキーマを厳密に定義し、§3 で `storage/frontmatter.rs` をスキーマの単一所有者として宣言する。§4 でパース時の未知フィールド処理方針（保持するが無視）を規定する。 |
 | 自動保存必須。ユーザーによる明示的保存操作は不要。 | §2 のシーケンス図で自動保存トリガーのすべてのパス（カード外クリック、別カード選択、ウィンドウクローズ）を網羅する。§4 で保存トリガーの実装方針と 100ms 以内の完了閾値を定義する。 |
-| デフォルト保存ディレクトリは Linux: `~/.local/share/promptnotes/notes/`、macOS: `~/Library/Application Support/promptnotes/notes/`。設定から任意ディレクトリに変更可能であること。 | §2 のディレクトリ構造図で OS 別パスを明示し、§3 で `config/mod.rs` と `file_manager.rs` のパス解決責務を定義する。§4 でディレクトリ変更時のバリデーション手順を規定する。 |
+| デフォルト保存ディレクトリは Linux: `~/.local/share/com.promptnotes/notes/`、macOS: `~/Library/Application Support/com.promptnotes/notes/`（ADR-010 で固定した identifier `com.promptnotes` と `app_data_dir()` から導出）。設定から任意ディレクトリに変更可能であること。変更フローは 2 段階確定（pick → apply）、既存ノート移動は明示同意必須、起動時不在は自動フォールバック禁止（requirements §デフォルト保存ディレクトリ / §保存ディレクトリの変更 参照）。 | §2 のディレクトリ構造図で OS 別パスを明示し、§3 で `config/mod.rs` と `file_manager.rs` のパス解決責務を定義する。§4.5 で `pick_notes_directory` / `set_config` の 2 段階確定と 3 フェーズ移動フロー、`validate_notes_directory` の 6 ステップバリデーション、起動時 errno 分類を規定する。 |
 
 ## 2. Mermaid Diagrams
 
@@ -163,30 +163,44 @@ flowchart TD
     DEFAULT --> CREATE_CONF["config.json を<br/>デフォルト値で作成"]
     CREATE_CONF --> RESOLVE
     PARSE --> CUSTOM{notes_dir が<br/>設定されている?}
-    CUSTOM -->|Yes| VALIDATE["ディレクトリ存在確認<br/>+ 書き込み権限検証"]
+    CUSTOM -->|Yes| VALIDATE["ディレクトリアクセス検証<br/>(errno 分類)"]
     CUSTOM -->|No| DEFAULT
-    VALIDATE --> VALID{有効?}
-    VALID -->|Yes| RESOLVE["notes_dir を<br/>canonicalize して確定"]
-    VALID -->|No| FALLBACK["デフォルトパスに<br/>フォールバック + 警告ログ"]
-    FALLBACK --> RESOLVE
+    VALIDATE --> STATUS{状態?}
+    STATUS -->|Ok| RESOLVE["notes_dir を<br/>canonicalize して確定"]
+    STATUS -->|NotFound / NotAccessible<br/>DeviceError / NotADirectory| PROMPT["UI で 3 択表示<br/>[再試行] / [別のディレクトリを選ぶ]<br/>/ [デフォルトに戻す]"]
+    PROMPT -->|再試行| VALIDATE
+    PROMPT -->|別のディレクトリ| PICK["pick_notes_directory フロー"]
+    PROMPT -->|デフォルトに戻す| DEFAULT
+    PICK --> VALIDATE
 
     RESOLVE --> READY["file_manager.rs<br/>notes_dir 確定"]
 
-    subgraph "OS 別デフォルトパス"
-        LINUX["Linux:<br/>~/.local/share/promptnotes/"]
-        MACOS["macOS:<br/>~/Library/Application Support/promptnotes/"]
+    subgraph "OS 別デフォルトパス (identifier: com.promptnotes)"
+        LINUX["Linux:<br/>~/.local/share/com.promptnotes/"]
+        MACOS["macOS:<br/>~/Library/Application Support/com.promptnotes/"]
     end
 
     DEFAULT -.->|"app_data_dir()"| LINUX
     DEFAULT -.->|"app_data_dir()"| MACOS
 ```
 
-パス解決の正規所有者は `config/mod.rs` であり、Tauri の `app_data_dir()` API を唯一の呼び出し元として OS 別のパス差異を吸収する。ハードコードされたパス文字列はアプリケーションコード中に存在しない。`file_manager.rs` はパス解決完了後の `notes_dir` を受け取り、以降のすべてのファイル操作でこのパスをベースディレクトリとして使用する。
+パス解決の正規所有者は `config/mod.rs` であり、Tauri の `app_data_dir()` API を唯一の呼び出し元として OS 別のパス差異を吸収する。ADR-010 で固定した identifier `com.promptnotes` が `app_data_dir()` の戻り値を決定し、そこから導出される `<app_data_dir>/notes/` がデフォルト `notes_dir` となる。ハードコードされたパス文字列（`dirs::data_dir()` 等を用いた OS 別パスの自前組み立てを含む）はアプリケーションコード中に存在してはならない。`file_manager.rs` はパス解決完了後の `notes_dir` を受け取り、以降のすべてのファイル操作でこのパスをベースディレクトリとして使用する。
+
+**起動時ディレクトリ不在の errno 分類と挙動**:
+
+| errno / 状態 | 意味 | UI メッセージ例 |
+|---|---|---|
+| `ENOENT` (NotFound) | パスが存在しない（削除または移動の疑い） | 「保存ディレクトリが見つかりません: `<path>`。削除または移動された可能性があります。」 |
+| `EACCES` (NotAccessible) | 権限不足 | 「保存ディレクトリへのアクセス権限がありません: `<path>`。」 |
+| `EIO` / `ENODEV` / `ESTALE` (DeviceError) | 外部デバイス/ネットワーク切断 | 「外付けディスクまたはネットワークドライブが接続されていない可能性があります: `<path>`。」 |
+| `ENOTDIR` | パスがディレクトリでない（ファイル等） | 「指定されたパスはディレクトリではありません: `<path>`。」 |
+
+いずれの場合も自動でデフォルトにフォールバックせず、必ず UI で `[再試行] / [別のディレクトリを選ぶ] / [デフォルトに戻す]` の 3 択をユーザーに提示する。`[再試行]` は一時的不在（外付けディスクの再接続等）のリカバリパス、`[デフォルトに戻す]` はユーザー明示同意を経た config.json の書き換えを伴う。
 
 ディレクトリ構造は以下の通りである。
 
 ```
-<app_data_dir>/                          # OS 依存のアプリデータルート
+<app_data_dir>/                          # OS 依存のアプリデータルート (= ~/.local/share/com.promptnotes/ on Linux)
 ├── config.json                          # アプリケーション設定
 └── notes/                               # デフォルトノート保存ディレクトリ
     ├── 2025-01-15T093042.md
@@ -197,8 +211,8 @@ flowchart TD
 
 | OS | `app_data_dir()` 解決先 | `config.json` パス | デフォルト `notes_dir` |
 |---|---|---|---|
-| Linux | `~/.local/share/promptnotes/` | `~/.local/share/promptnotes/config.json` | `~/.local/share/promptnotes/notes/` |
-| macOS | `~/Library/Application Support/promptnotes/` | `~/Library/Application Support/promptnotes/config.json` | `~/Library/Application Support/promptnotes/notes/` |
+| Linux | `~/.local/share/com.promptnotes/` | `~/.local/share/com.promptnotes/config.json` | `~/.local/share/com.promptnotes/notes/` |
+| macOS | `~/Library/Application Support/com.promptnotes/` | `~/Library/Application Support/com.promptnotes/config.json` | `~/Library/Application Support/com.promptnotes/notes/` |
 
 ### 2.5 自動保存データフロー図
 
@@ -390,26 +404,142 @@ pub struct NoteFrontmatter {
 
 ```json
 {
-  "notes_dir": "/home/user/.local/share/promptnotes/notes/"
+  "notes_dir": "/home/user/.local/share/com.promptnotes/notes/"
 }
 ```
 
 | フィールド | 型 | 必須 | デフォルト値 |
 |---|---|---|---|
-| `notes_dir` | `string`（絶対パス） | No | `<app_data_dir>/notes/` |
+| `notes_dir` | `string`（絶対パス） | No | `<app_data_dir>/notes/`（identifier `com.promptnotes` から導出） |
 
 `config.json` が存在しない場合、`config/mod.rs` は `app_data_dir()` を使用してデフォルト値を生成し、`config.json` をデフォルト値で新規作成する。`notes_dir` が未指定または空文字列の場合も同様にデフォルト値を使用する。
 
-**ディレクトリ変更時のバリデーション手順:**
+**ディレクトリ変更フロー — 2 段階確定**
 
-1. `set_config` コマンドが新しい `notes_dir` パスを受信
-2. `std::fs::canonicalize()` でパスを正規化
-3. ディレクトリ存在確認。存在しない場合は `std::fs::create_dir_all()` で作成を試行
-4. 書き込み権限検証: テストファイル `.promptnotes_write_test` を作成・削除
-5. バリデーション通過後、`config.json` に新しいパスを書き込み
-6. `file_manager.rs` の `notes_dir` を更新し、以降のファイル操作で新ディレクトリを使用
+設定変更は「参照で候補を選ぶ（pending）」→「Apply で確定」の 2 段階に分離する。`pick_notes_directory` コマンドで OS ダイアログを開き、ユーザーが選んだパスはフロントエンドの `config` ストア内に pending 状態として保持される。`set_config` コマンドが呼ばれて初めて `config.json` が書き換わる。参照しただけの状態では設定は一切変更されない。
 
-旧ディレクトリのファイル移動はユーザーに確認ダイアログ「ノートを新しいディレクトリに移動しますか？」を提示し、「移動する」選択時は `move_notes` IPC コマンドで旧ディレクトリの `.md` ファイルを新ディレクトリに移動する（同名ファイルはスキップし上書きしない）。「移動しない」選択時は新ディレクトリ内の既存 `.md` ファイルを `list_notes` で読み込む（Component Architecture OQ-ARCH-004 準拠、§4.2 参照）。
+**`pick_notes_directory` コマンド**:
+
+1. `tauri-plugin-dialog` の `blocking_pick_folder` を起動（初期位置は現在の `notes_dir`）
+2. ユーザーがキャンセル → `None` を返却（フロントエンドはエラー表示しない）
+3. ユーザーが選択 → `validate_notes_directory(path)` を実行
+4. 失敗 → `ConfigError` を返却（エラーコードと該当パスを含む）
+5. 成功 → canonical 化した `PathBuf` を返却（pending 候補としてフロントエンド側で保持）
+
+**`validate_notes_directory` のバリデーション手順（6 ステップ）**:
+
+| # | 検証 | 失敗時エラー |
+|---|---|---|
+| 1 | パス文字列を絶対パス化（`~` 展開、相対パス拒否） | `ConfigError::InvalidPath` |
+| 2 | `canonicalize()` でシンボリックリンク解決・パス正規化 | `ConfigError::InvalidPath` (errno) |
+| 3 | ディレクトリであること（ファイル・シンボリックリンクファイル不可） | `ConfigError::NotADirectory` |
+| 4 | 書き込みプローブ: `.promptnotes-probe` を作成して即削除 | `ConfigError::NotWritable` |
+| 5 | `config.json` を保持するディレクトリと同一でないこと（設定とノートの分離） | `ConfigError::ReservedDirectory` |
+| 6 | 警告対象: ホームディレクトリ直下・ルート直下・システムディレクトリ（`/etc`, `/usr` 等） | 警告フラグのみ付与。拒否はしない（UNIX 権限に委ねる） |
+
+書き込みプローブは必須である。`canonicalize` では読み取り専用マウント・SELinux・ACL による書き込み不可を検知できないため、実ファイル作成で確認する。
+
+**`set_config` コマンドフロー — 3 フェーズ（移動オプション適用時）**
+
+```mermaid
+sequenceDiagram
+    participant UI as SettingsModal.svelte
+    participant TC as tauri-commands.ts
+    participant CMD as commands/config.rs
+    participant CFG as config/mod.rs
+    participant FMGR as storage/file_manager.rs
+    participant FS as Local Filesystem
+
+    UI->>TC: setConfig({ notes_dir, move_existing })
+    TC->>CMD: invoke("set_config", { notes_dir, move_existing })
+    CMD->>CFG: validate_notes_directory(notes_dir)
+    CFG-->>CMD: Ok (TOCTOU 対策で Apply 時点で再検証)
+
+    Note over CMD: 旧 == 新 なら no-op 早期リターン
+
+    alt move_existing == true
+        Note over CMD: Phase 1: コピー
+        CMD->>FMGR: list old_notes_dir/*.md
+        FMGR-->>CMD: old_files
+        CMD->>FMGR: check 新 notes_dir でファイル名衝突なし
+        FMGR-->>CMD: Ok (衝突時は ConfigError::MoveConflict)
+        loop 各 .md ファイル
+            CMD->>FS: copy(old/file.md, new/file.md)
+            FS-->>CMD: Ok / Err (Err 時は新側の途中コピーを削除してロールバック)
+        end
+    end
+
+    Note over CMD: Phase 2: config.json atomic write (point of no return)
+    CMD->>FS: write config.json.tmp
+    CMD->>FS: fsync
+    CMD->>FS: rename(config.json.tmp, config.json)
+    FS-->>CMD: Ok (Err 時は新側のコピーを削除して旧に戻す)
+
+    CMD->>CFG: update AppConfig state
+    CMD->>FMGR: update notes_dir
+
+    alt move_existing == true
+        Note over CMD: Phase 3: 旧 .md 削除
+        loop 各 .md ファイル
+            CMD->>FS: remove_file(old/file.md)
+            FS-->>CMD: Ok / Warn (失敗は remaining_in_old にカウント、Error にしない)
+        end
+    end
+
+    CMD-->>TC: SetConfigResult { notes_dir, moved, remaining_in_old, old_dir }
+    TC-->>UI: 新しい notes_dir と残留件数を返却
+    UI->>UI: config store 更新 / Feed 再ロード / 残留件数トースト表示
+```
+
+**3 フェーズの設計意図**:
+
+| 判断 | 理由 |
+|---|---|
+| `rename(2)` を使わず常に copy-then-delete | クロスファイルシステム（外付けディスク、NFS、FUSE）で `EXDEV` になるケースを統一ハンドリング |
+| config.json write を不可逆境界に置く | Phase 1 失敗までは旧データ完全無傷、何度でもリトライ可能。Phase 2 失敗はコピー分をクリーンアップして status quo 復元。Phase 3 失敗だけは不可逆だが、データは新側に完全に存在しており被害は「旧に残骸が残る」のみ |
+| 非 `.md` ファイルは触らない | Obsidian vault サブディレクトリ等で、添付画像・`.canvas` 等の他資産を破壊しない |
+| Phase 3 部分失敗を Warning 止まり | 新側で完全にデータが揃い、アプリ動作には支障なし。UI で `remaining_in_old: N` を通知して手動清掃機会を与える |
+| `move_existing` は単一フラグ（部分選択不可） | 「一部だけ移動」は衝突ハンドリング複雑化。全件 or 0 件のみサポート |
+
+**移動の二次確認ダイアログ（UI 責務）**:
+
+`move_existing: true` で `set_config` を呼ぶ前に、SettingsModal は以下のダイアログをユーザーに提示し、明示同意を得る:
+
+> 既存ノート N 件を新ディレクトリへ移動します。
+> 元のディレクトリからは削除され、元に戻せません。
+> 実行しますか？
+> [キャンセル] [実行]
+
+キャンセルなら pending 状態を保持したまま UI に戻る（Apply ボタンはまだ有効）。
+
+**`ConfigError` 型**:
+
+```rust
+pub enum ConfigError {
+    InvalidPath(PathBuf, std::io::ErrorKind),  // 絶対パス化/canonicalize 失敗
+    NotADirectory(PathBuf),                      // パスがディレクトリでない
+    NotWritable(PathBuf),                        // 書き込みプローブ失敗
+    ReservedDirectory(PathBuf),                  // config.json 配置ディレクトリと同一
+    SameDirectory,                               // 旧 == 新
+    MoveConflict(Vec<String>),                   // 新側に衝突するファイル名リスト
+    CopyFailed(PathBuf, std::io::Error),          // Phase 1 失敗
+    ConfigWriteFailed(std::io::Error),            // Phase 2 失敗
+    // Phase 3 失敗は Error ではなく SetConfigResult.remaining_in_old で報告
+}
+```
+
+**`SetConfigResult` 型**:
+
+```rust
+pub struct SetConfigResult {
+    pub notes_dir: PathBuf,        // 確定した新パス
+    pub moved: usize,              // Phase 3 で削除に成功したファイル数
+    pub remaining_in_old: usize,   // Phase 3 で削除失敗したファイル数（0 が正常）
+    pub old_dir: Option<PathBuf>,  // 残骸があるときに UI で誘導するため
+}
+```
+
+旧 `move_notes` IPC コマンドの構想は廃止する。ディレクトリ変更と既存ノート移動は `set_config({ notes_dir, move_existing })` の単一トランザクションとして扱い、2 段階 IPC による中間状態（config 更新済みだがファイル未移動、など）を排除する。
 
 ### 4.6 ファイル一覧取得と日付フィルタの実装
 

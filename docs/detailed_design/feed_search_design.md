@@ -817,7 +817,10 @@ $: {
 | エラーコード | 発生条件 | フロントエンド対応 |
 |---|---|---|
 | `STORAGE_WRITE_FAILED` / `STORAGE_NOT_FOUND` | `list_notes` / `search_notes` / `list_all_tags` でのファイル読み取り失敗 | フィード上部にエラーバナーを表示。直前のキャッシュ（`notes` store の現在値）を保持 |
-| `CONFIG_INVALID_DIR` | `notes_dir` が存在しないまたは書き込み権限がない | 設定画面への遷移を促すメッセージを表示 |
+| `CONFIG_DIR_NOT_FOUND` | 起動時・実行時に `notes_dir` が `ENOENT`（削除・移動の疑い） | 「保存ディレクトリが見つかりません: `<path>`。削除または移動された可能性があります。」を表示し、`[再試行] / [別のディレクトリを選ぶ] / [デフォルトに戻す]` の 3 択を提示（requirements 不可侵条項 4） |
+| `CONFIG_DIR_NOT_ACCESSIBLE` | `notes_dir` が `EACCES`（権限不足） | 「保存ディレクトリへのアクセス権限がありません: `<path>`。」を表示し、3 択を提示 |
+| `CONFIG_DIR_DEVICE_ERROR` | `notes_dir` が `EIO` / `ENODEV` / `ESTALE`（外部デバイス/ネット切断の疑い） | 「外付けディスクまたはネットワークドライブが接続されていない可能性があります: `<path>`。」を表示し、3 択を提示（`[再試行]` でディスク再接続後にリカバリ可能） |
+| `CONFIG_DIR_NOT_A_DIRECTORY` | `notes_dir` が `ENOTDIR`（ファイル等を指している） | 「指定されたパスはディレクトリではありません: `<path>`。」を表示し、再選択を促す |
 | `STORAGE_NOT_FOUND` | `read_note` で指定ファイルが存在しない（削除済み等） | 該当カードをフィードから除去し、`notes` store を更新 |
 | `STORAGE_INVALID_FILENAME` / `STORAGE_PATH_TRAVERSAL` | `read_note` のファイル名バリデーション違反 | 該当カードをフィードから除去し、開発者コンソールに詳細ログを出力 |
 | `STORAGE_FRONTMATTER_PARSE` | frontmatter の YAML パース失敗（ADR-008 不変条件違反時のみ致命化） | 該当ノートのタグ・スニペットを空として扱い、フィード表示は継続。開発者コンソールに詳細ログを出力 |
