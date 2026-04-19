@@ -38,7 +38,6 @@ pub struct SearchNotesResult {
 fn build_metadata(filename: &str, content: &str) -> NoteMetadata {
     let parsed = frontmatter::parse(content);
     let body = frontmatter::extract_body(content);
-    let preview: String = body.chars().take(100).collect();
 
     let created_at = crate::storage::file_manager::filename_to_datetime(filename)
         .unwrap_or_default();
@@ -49,7 +48,7 @@ fn build_metadata(filename: &str, content: &str) -> NoteMetadata {
         tags: parsed.tags,
         created_at: created_at.clone(),
         updated_at: created_at,
-        body_preview: preview,
+        body_preview: body.to_string(),
     }
 }
 

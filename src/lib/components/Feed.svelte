@@ -3,22 +3,48 @@
   import SearchBar from "./SearchBar.svelte";
   import TagFilter from "./TagFilter.svelte";
   import DateFilter from "./DateFilter.svelte";
-  import { notes, loadNotes, loadMoreNotes, searchNotesAction } from "$lib/stores/notes";
+  import { notes, loadNotes, loadMoreNotes, searchNotesAction, prependNote } from "$lib/stores/notes";
   import { filters, setQuery, toggleTag, setDateRange, resetFilters } from "$lib/stores/filters";
   import { searchResults } from "$lib/stores/searchResults";
   import { totalCount } from "$lib/stores/totalCount";
+  import { createNote } from "$lib/utils/tauri-commands";
+  import { handleCommandError } from "$lib/utils/error-handler";
 
-  interface Props {
-    onOpenNote: (filename: string) => void;
-  }
-
-  let { onOpenNote }: Props = $props();
+  let editingFilename: string | null = $state(null);
 
   let allTags: string[] = $derived(
     [...new Set($notes.flatMap((n) => n.tags))].sort()
   );
 
   let hasMore = $derived($notes.length < $totalCount && !$searchResults);
+
+  export async function createNewNote(): Promise<void> {
+    try {
+      const meta = await createNote([]);
+      prependNote(meta);
+      editingFilename = meta.filename;
+    } catch (error) {
+      handleCommandError(error);
+    }
+  }
+
+  function handleCardClick(filename: string) {
+    editingFilename = filename;
+  }
+
+  function handleOutsideClick(event: MouseEvent) {
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+    if (!target.closest('[data-testid="note-card"]')) {
+      editingFilename = null;
+    }
+  }
+
+  function handleOutsideKeydown(event: KeyboardEvent) {
+    if (event.key === "Escape" && editingFilename !== null) {
+      editingFilename = null;
+    }
+  }
 
   async function handleSearch(query: string) {
     setQuery(query);
@@ -41,7 +67,14 @@
   }
 </script>
 
-<div class="feed-container">
+<svelte:window onkeydown={handleOutsideKeydown} />
+
+<div
+  class="feed-container"
+  onclick={handleOutsideClick}
+  role="presentation"
+  data-testid="feed-screen"
+>
   <div class="feed-toolbar">
     <SearchBar onSearch={handleSearch} query={$filters.query} />
     <div class="feed-filters">
@@ -65,14 +98,19 @@
         <NoteCard
           note={result.metadata}
           matchedLine={result.matched_line}
-          onOpen={() => onOpenNote(result.metadata.filename)}
+          isEditing={editingFilename === result.metadata.filename}
+          onClick={() => handleCardClick(result.metadata.filename)}
         />
       {:else}
         <p class="feed-empty">No search results found.</p>
       {/each}
     {:else}
       {#each $notes as note (note.filename)}
-        <NoteCard note={note} onOpen={() => onOpenNote(note.filename)} />
+        <NoteCard
+          note={note}
+          isEditing={editingFilename === note.filename}
+          onClick={() => handleCardClick(note.filename)}
+        />
       {:else}
         <p class="feed-empty">No notes yet. Create one!</p>
       {/each}
@@ -98,6 +136,7 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
+    flex-shrink: 0;
   }
   .feed-filters {
     display: flex;

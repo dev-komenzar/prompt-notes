@@ -6,51 +6,48 @@
   import { markdown } from "@codemirror/lang-markdown";
   import { syntaxHighlighting, defaultHighlightStyle } from "@codemirror/language";
   import { frontmatterHighlight } from "./frontmatter-decoration";
-  import CopyButton from "./CopyButton.svelte";
-  import DeleteButton from "./DeleteButton.svelte";
   import {
-    createNote,
     readNote,
     saveNote as saveNoteCmd,
   } from "$lib/utils/tauri-commands";
-  import { extractBody, generateNoteContent, parseNote } from "$lib/frontmatter";
-  import { prependNote, updateNote, removeNote } from "$lib/stores/notes";
+  import { updateNote } from "$lib/stores/notes";
   import { handleCommandError } from "$lib/utils/error-handler";
   import { registerPendingSave, clearPendingSave } from "$lib/utils/window-close";
   import { debounce } from "$lib/utils/debounce";
 
-  interface Props {
-    filename: string | null;
-    onBack: () => void;
+  interface EditorApi {
+    getRawContent(): string;
   }
 
-  let { filename, onBack }: Props = $props();
+  interface Props {
+    filename: string;
+    api?: EditorApi | null;
+  }
+
+  let { filename, api = $bindable() }: Props = $props();
 
   let editorContainer: HTMLDivElement;
   let view: EditorView | null = null;
-  let currentFilename: string | null = $state(filename);
-  let isDirty = $state(false);
-  let currentTags: string[] = $state([]);
+  let isDirty = false;
   let lastSavedContent = "";
-  let createDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   const AUTO_SAVE_MS = 2000;
 
   const debouncedAutoSave = debounce(async () => {
-    if (isDirty && currentFilename && view) {
+    if (isDirty && view) {
       await doSave();
     }
   }, AUTO_SAVE_MS);
 
   async function doSave(): Promise<void> {
-    if (!view || !currentFilename) return;
+    if (!view) return;
     const content = view.state.doc.toString();
     if (content === lastSavedContent) {
       isDirty = false;
       return;
     }
     try {
-      const updated = await saveNoteCmd(currentFilename, content);
+      const updated = await saveNoteCmd(filename, content);
       updateNote(updated);
       lastSavedContent = content;
       isDirty = false;
@@ -59,9 +56,10 @@
     }
   }
 
-  async function initEditor(content: string): Promise<void> {
+  function setupEditor(content: string): void {
     const state = EditorState.create({
       doc: content,
+      selection: { anchor: content.length },
       extensions: [
         keymap.of([...defaultKeymap, ...historyKeymap]),
         history(),
@@ -78,140 +76,56 @@
       ],
     });
 
-    view = new EditorView({
-      state,
-      parent: editorContainer,
-    });
-
+    view = new EditorView({ state, parent: editorContainer });
     lastSavedContent = content;
+    view.focus();
   }
 
   onMount(async () => {
     registerPendingSave(doSave);
-
+    api = {
+      getRawContent: () => view?.state.doc.toString() ?? "",
+    };
     try {
-      if (filename) {
-        // Existing note
-        currentFilename = filename;
-        const raw = await readNote(filename);
-        const parsed = parseNote(raw);
-        currentTags = parsed.tags;
-        await initEditor(raw);
-      } else {
-        // New note — debounce creation
-        if (createDebounceTimer) clearTimeout(createDebounceTimer);
-        createDebounceTimer = setTimeout(async () => {
-          try {
-            const meta = await createNote([]);
-            currentFilename = meta.filename;
-            currentTags = meta.tags;
-            prependNote(meta);
-            const raw = await readNote(meta.filename);
-            await initEditor(raw);
-          } catch (error) {
-            handleCommandError(error);
-          }
-        }, 500);
-      }
+      const raw = await readNote(filename);
+      setupEditor(raw);
     } catch (error) {
       handleCommandError(error);
     }
   });
 
   onDestroy(() => {
-    if (createDebounceTimer) clearTimeout(createDebounceTimer);
     clearPendingSave();
-    if (isDirty && currentFilename && view) {
-      // Fire-and-forget save on destroy
+    if (isDirty && view) {
       const content = view.state.doc.toString();
-      if (content !== lastSavedContent && currentFilename) {
-        saveNoteCmd(currentFilename, content).catch(() => {});
+      if (content !== lastSavedContent) {
+        saveNoteCmd(filename, content)
+          .then(updateNote)
+          .catch(() => {});
       }
     }
     view?.destroy();
     view = null;
+    api = null;
   });
-
-  function getBodyText(): string {
-    if (!view) return "";
-    return extractBody(view.state.doc.toString());
-  }
-
-  async function handleDelete(): Promise<void> {
-    if (currentFilename) {
-      removeNote(currentFilename);
-    }
-    onBack();
-  }
 </script>
 
-<div class="editor-wrapper">
-  <div class="editor-toolbar">
-    <div class="editor-tags">
-      {#each currentTags as tag}
-        <span class="tag">{tag}</span>
-      {/each}
-    </div>
-    <div class="editor-actions">
-      {#if isDirty}
-        <span class="save-indicator">Unsaved</span>
-      {/if}
-      <CopyButton getContent={getBodyText} />
-      {#if currentFilename}
-        <DeleteButton filename={currentFilename} onDeleted={handleDelete} />
-      {/if}
-    </div>
-  </div>
-  <div class="editor-container" bind:this={editorContainer}></div>
-</div>
+<div class="note-editor" bind:this={editorContainer}></div>
 
 <style>
-  .editor-wrapper {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
+  .note-editor {
+    width: 100%;
   }
-  .editor-toolbar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 8px 16px;
-    border-bottom: 1px solid var(--border);
-  }
-  .editor-tags {
-    display: flex;
-    gap: 4px;
-  }
-  .tag {
-    background: var(--tag-bg);
-    color: var(--tag-text);
-    font-size: 0.75rem;
-    padding: 2px 6px;
-    border-radius: 3px;
-  }
-  .editor-actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .save-indicator {
-    font-size: 0.8rem;
-    color: var(--text-secondary);
-    font-style: italic;
-  }
-  .editor-container {
-    flex: 1;
-    overflow: auto;
-  }
-  .editor-container :global(.cm-editor) {
-    height: 100%;
+  .note-editor :global(.cm-editor) {
+    border-radius: var(--radius);
+    background: var(--surface);
     font-family: var(--font-mono);
     font-size: 0.95rem;
   }
-  .editor-container :global(.cm-scroller) {
-    padding: 16px;
+  .note-editor :global(.cm-scroller) {
+    padding: 8px;
   }
-  .editor-container :global(.cm-focused) {
+  .note-editor :global(.cm-focused) {
     outline: none;
   }
 </style>
