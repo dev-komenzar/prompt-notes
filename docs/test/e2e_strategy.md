@@ -42,6 +42,7 @@ tests/
 │   ├── editor.spec.ts          # module:editor
 │   ├── feed.spec.ts            # (将来) module:feed
 │   ├── grid.spec.ts            # レイアウト / グリッド
+│   ├── keyboard-shortcut.spec.ts # FC-EDIT-01 ショートカット分離検証
 │   ├── navigation.spec.ts      # 画面遷移
 │   ├── platform.spec.ts        # OS 差分 (Cmd/Ctrl)
 │   ├── scope-exclusion.spec.ts # 非スコープ機能の未実装確認
@@ -98,6 +99,7 @@ it('AC-ED-01: editor engine is CodeMirror 6', async () => { ... });
 | spec ファイル | カバーする AC ID 範囲 |
 |---|---|
 | `editor.spec.ts` | AC-ED-*, AC-EDIT-*, FC-SCOPE-01/02 |
+| `keyboard-shortcut.spec.ts` | FC-EDIT-01 (ショートカット単独の分離検証 — ボタン動作と相乗させず `.md` ファイル件数 0→1 を確認) |
 | `storage.spec.ts` | AC-STOR-* |
 | `navigation.spec.ts` | AC-NAV-* |
 | `settings.spec.ts` | AC-SET-*, AC-STOR-05, AC-STOR-05a, AC-STOR-05b, AC-STOR-05c (2 段階確定・移動オプション・衝突検出・起動時不在の 4 エラー分類) |
