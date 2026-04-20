@@ -12,7 +12,17 @@
   let feedRef: { createNewNote: () => Promise<void> } | undefined = $state();
   let settingsOpen = $state(false);
 
+  // Coalesce concurrent triggers of the new-note shortcut. The OS-level global
+  // shortcut and the WebView keydown can both fire for a single Ctrl/Cmd+N
+  // when the app is focused; without this guard each press would create two
+  // notes.
+  const NEW_NOTE_DEDUPE_MS = 200;
+  let lastNewNoteAt = 0;
+
   function handleNewNote() {
+    const now = performance.now();
+    if (now - lastNewNoteAt < NEW_NOTE_DEDUPE_MS) return;
+    lastNewNoteAt = now;
     void feedRef?.createNewNote();
   }
 
@@ -24,6 +34,17 @@
     settingsOpen = false;
   }
 
+  function handleWindowKeydown(event: KeyboardEvent) {
+    // In-WebView counterpart of the OS global shortcut. AC-EDIT-01 requires
+    // Cmd/Ctrl+N to create a new note even when only the WebView is receiving
+    // the keystroke (e.g. WebDriver-injected keys, or platforms where the
+    // global hook misses the chord).
+    if (event.key === "n" && (event.ctrlKey || event.metaKey) && !event.altKey) {
+      event.preventDefault();
+      handleNewNote();
+    }
+  }
+
   onMount(async () => {
     await loadConfig();
     await loadNotes();
@@ -31,6 +52,8 @@
     setupGlobalShortcut(handleNewNote);
   });
 </script>
+
+<svelte:window onkeydown={handleWindowKeydown} />
 
 <div class="app-container">
   <Header
