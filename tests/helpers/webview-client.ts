@@ -39,11 +39,24 @@ export async function getEditorContent(): Promise<string> {
   return el.getText();
 }
 
-/** Type text into the CodeMirror 6 editor. */
+/** Type text into the CodeMirror 6 editor.
+ *
+ * WebdriverIO 9 normalises a literal SPACE character in a `browser.keys` array
+ * to an empty keyDown action, dropping every space from the typed payload.
+ * Type each character one at a time, mapping ` ` to the W3C "Space" key name
+ * which the WDIO key-action layer expands to U+E00D correctly. */
 export async function typeInEditor(text: string): Promise<void> {
   const editor = await browser.$('.cm-editor');
   await editor.click();
-  await browser.keys(text.split(''));
+  for (const ch of text) {
+    if (ch === ' ') {
+      await browser.keys(['Space']);
+    } else if (ch === '\n') {
+      await browser.keys(['Enter']);
+    } else {
+      await browser.keys(ch);
+    }
+  }
 }
 
 /** Get the count of note cards in the grid view. */
@@ -103,4 +116,46 @@ export async function getCopyButton() {
   return browser.$(
     '[data-testid="copy-button"], [aria-label*="コピー"], [aria-label*="copy" i]',
   );
+}
+
+/**
+ * Redirect the running app's notes_directory to `dir` and reload the SPA so the
+ * Svelte stores re-read the new directory's contents. Required because the
+ * Tauri binary is launched once per spec session — per-test isolation must
+ * therefore happen via IPC at runtime.
+ */
+export async function setNotesDirectoryAndReload(dir: string): Promise<void> {
+  await waitForAppReady();
+  await browser.waitUntil(
+    async () =>
+      Boolean(
+        await browser.execute(
+          () => typeof (window as any).__TAURI_INTERNALS__?.invoke === 'function',
+        ),
+      ),
+    { timeout: 10_000, timeoutMsg: 'Tauri IPC bridge did not attach within 10s' },
+  );
+
+  const ipcErr = await browser.executeAsync<string | null, [string]>(
+    function (notesDir, done) {
+      const invoke = (window as any).__TAURI_INTERNALS__.invoke as (
+        cmd: string,
+        args?: Record<string, unknown>,
+      ) => Promise<unknown>;
+      invoke('set_config', { newConfig: { notes_directory: notesDir } })
+        .then(() => done(null))
+        .catch((err: unknown) =>
+          done(err instanceof Error ? err.message : String(err)),
+        );
+    },
+    dir,
+  );
+  if (ipcErr) {
+    throw new Error(`set_config IPC failed: ${ipcErr}`);
+  }
+
+  // Reload the page; Rust State survives, so onMount picks up the new directory.
+  await browser.execute(() => window.location.reload());
+  await browser.pause(300);
+  await waitForAppReady();
 }

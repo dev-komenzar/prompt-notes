@@ -73,7 +73,7 @@ export async function getConfig(): Promise<AppConfig> {
 }
 
 export async function setConfig(config: AppConfig): Promise<void> {
-  return invoke<void>("set_config", { config });
+  return invoke<void>("set_config", { newConfig: config });
 }
 
 export async function moveNotes(

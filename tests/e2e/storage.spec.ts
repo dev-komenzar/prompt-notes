@@ -1,8 +1,20 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { waitForAppReady, navigateToView, typeInEditor } from '../helpers/webview-client';
+import {
+  waitForAppReady,
+  navigateToView,
+  typeInEditor,
+  setNotesDirectoryAndReload,
+} from '../helpers/webview-client';
 import { getNewNoteShortcut, formatExpectedNotesDir, detectPlatform } from '../helpers/platform';
-import { createTempNotesDir, cleanupTempDir, listNotesOnDisk, readNoteFromDisk, isValidNoteFilename, writeTestConfig } from '../helpers/test-fixtures';
+import {
+  createTempNotesDir,
+  cleanupTempDir,
+  listNotesOnDisk,
+  readNoteFromDisk,
+  isValidNoteFilename,
+  writeTestConfig,
+} from '../helpers/test-fixtures';
 
 describe('module:storage — E2E Tests', () => {
   let tempDir: string;
@@ -10,6 +22,7 @@ describe('module:storage — E2E Tests', () => {
   beforeEach(async () => {
     tempDir = createTempNotesDir();
     writeTestConfig(tempDir, tempDir);
+    await setNotesDirectoryAndReload(path.join(tempDir, 'notes'));
   });
 
   afterEach(async () => {

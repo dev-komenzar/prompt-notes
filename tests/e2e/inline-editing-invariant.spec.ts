@@ -1,5 +1,11 @@
-import { waitForAppReady } from '../helpers/webview-client';
-import { createTempNotesDir, cleanupTempDir, seedRecentNotes, writeTestConfig } from '../helpers/test-fixtures';
+import * as path from 'path';
+import { waitForAppReady, setNotesDirectoryAndReload } from '../helpers/webview-client';
+import {
+  createTempNotesDir,
+  cleanupTempDir,
+  seedRecentNotes,
+  writeTestConfig,
+} from '../helpers/test-fixtures';
 
 /**
  * INV-CONTAIN (component_architecture.md §2.1b / §4.3b) — Inline editing containment invariants.
@@ -24,8 +30,8 @@ describe('INV-CONTAIN — Inline editing containment invariants', () => {
   // INV-CONTAIN-03: Feed and its sibling note-cards remain in the DOM while any single card is in edit mode.
   it('INV-CONTAIN-03: feed stays mounted during edit mode (sibling note-cards remain in DOM)', async () => {
     seedRecentNotes(tempDir, 2);
-    await waitForAppReady();
-    await browser.pause(1_000);
+    await setNotesDirectoryAndReload(path.join(tempDir, 'notes'));
+    await browser.pause(500);
 
     const cardsBefore = await browser.$$('[data-testid="note-card"]');
     expect(cardsBefore.length).toBeGreaterThanOrEqual(2);
@@ -41,8 +47,8 @@ describe('INV-CONTAIN — Inline editing containment invariants', () => {
   // not as a sibling of the feed at the App level.
   it('INV-CONTAIN-02: .cm-editor is a descendant of the active note-card', async () => {
     seedRecentNotes(tempDir, 2);
-    await waitForAppReady();
-    await browser.pause(1_000);
+    await setNotesDirectoryAndReload(path.join(tempDir, 'notes'));
+    await browser.pause(500);
 
     const cardsBefore = await browser.$$('[data-testid="note-card"]');
     await cardsBefore[0].click();
@@ -64,8 +70,8 @@ describe('INV-CONTAIN — Inline editing containment invariants', () => {
   // Switching cards must destroy the old editor and re-create it in the new card — never stack instances.
   it('INV-CONTAIN-04: at most one .cm-editor instance exists feed-wide, even across card switches', async () => {
     seedRecentNotes(tempDir, 3);
-    await waitForAppReady();
-    await browser.pause(1_000);
+    await setNotesDirectoryAndReload(path.join(tempDir, 'notes'));
+    await browser.pause(500);
 
     const cardsBefore = await browser.$$('[data-testid="note-card"]');
     await cardsBefore[0].click();
@@ -97,8 +103,8 @@ describe('INV-CONTAIN — Inline editing containment invariants', () => {
   // across mode transitions — including on the non-editing sibling cards while one card is in edit mode.
   it('INV-CONTAIN-05: CopyButton/DeleteButton remain mounted on non-editing cards during edit mode', async () => {
     seedRecentNotes(tempDir, 2);
-    await waitForAppReady();
-    await browser.pause(1_000);
+    await setNotesDirectoryAndReload(path.join(tempDir, 'notes'));
+    await browser.pause(500);
 
     const cardsBefore = await browser.$$('[data-testid="note-card"]');
     await cardsBefore[0].click();
