@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { debounce } from "$lib/utils/debounce";
+  import { debounce } from "$lib/shell/debounce";
 
   interface Props {
     query: string;

@@ -10,7 +10,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "paths": {
-      "$lib/*": ["./src/lib/*"]
+      "$lib/*": ["./src/*"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.svelte"],

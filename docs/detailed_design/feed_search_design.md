@@ -409,15 +409,15 @@ stateDiagram-v2
 
 | ファイル / コンポーネント | 所有モジュール | 責務の単一所有 | 再実装禁止範囲 |
 |---|---|---|---|
-| `src/lib/components/Feed.svelte` | `module:feed` | ノートカード一覧のレンダリング（降順ソート）、フィルタ変更の検知と IPC 発行、編集状態の調停、ノート追加・削除時のアニメーション管理（Component Architecture §4.12 参照） | `module:editor` が一覧レンダリングロジックやアニメーションディレクティブを持つことを禁止 |
-| `src/lib/components/SearchBar.svelte` | `module:feed` | 検索クエリ入力 UI、300ms デバウンス | デバウンスロジックは `SearchBar.svelte` 内にカプセル化。他コンポーネントでの再実装禁止 |
-| `src/lib/components/TagFilter.svelte` | `module:feed` | タグフィルタ UI（複数選択時 OR 条件）| フロントエンドでのタグフィルタリングロジック実行禁止。UI はフィルタ状態の更新のみ担当 |
-| `src/lib/components/DateFilter.svelte` | `module:feed` | 日付範囲フィルタ UI | フロントエンドでの日付フィルタリングロジック実行禁止 |
-| `src/lib/components/Header.svelte` | `module:feed` | ヘッダー統合コンポーネント（New ボタン、⚙️ ボタン、SearchBar、フィルタ）。アプリ名は表示しない | 子コンポーネントの配置と接続のみ担当。個別フィルタの内部ロジックに関与しない |
-| `src/lib/stores/notes.ts` | `module:feed` | ノート一覧の状態管理（`Writable<NoteMetadata[]>`） | store の更新は IPC レスポンス受信時・`create_note` / `delete_note` 成功時のみ。直接の手動操作禁止 |
-| `src/lib/stores/filters.ts` | `module:feed` | フィルタ状態管理（`fromDate`, `toDate`, `tags`, `query`）。セッション内は状態保持、アプリ再起動時にデフォルト（7 日間）にリセット | フィルタ状態の唯一の信頼源。各フィルタ UI コンポーネントはこの store のみを更新する |
-| `src/lib/stores/searchResults.ts` | `module:feed` | 検索結果のスニペット・ハイライト情報（`Writable<SearchResultEntry[] | null>`） | `search_notes` レスポンス受信時に更新。`list_notes` フォールバック時は `null` にリセット。`NoteCard.svelte` が表示モードの切替に使用 |
-| `src/lib/stores/totalCount.ts` | `module:feed` | フィルタ条件に合致する全ノート数（`Writable<number>`） | `list_notes` / `search_notes` レスポンスの `total_count` で更新。`Feed.svelte` がスクロールロードの次ページ有無判定に使用 |
+| `src/feed/Feed.svelte` | `module:feed` | ノートカード一覧のレンダリング（降順ソート）、フィルタ変更の検知と IPC 発行、編集状態の調停、ノート追加・削除時のアニメーション管理（Component Architecture §4.12 参照） | `module:editor` が一覧レンダリングロジックやアニメーションディレクティブを持つことを禁止 |
+| `src/feed/SearchBar.svelte` | `module:feed` | 検索クエリ入力 UI、300ms デバウンス | デバウンスロジックは `SearchBar.svelte` 内にカプセル化。他コンポーネントでの再実装禁止 |
+| `src/feed/TagFilter.svelte` | `module:feed` | タグフィルタ UI（複数選択時 OR 条件）| フロントエンドでのタグフィルタリングロジック実行禁止。UI はフィルタ状態の更新のみ担当 |
+| `src/feed/DateFilter.svelte` | `module:feed` | 日付範囲フィルタ UI | フロントエンドでの日付フィルタリングロジック実行禁止 |
+| `src/feed/Header.svelte` | `module:feed` | ヘッダー統合コンポーネント（New ボタン、⚙️ ボタン、SearchBar、フィルタ）。アプリ名は表示しない | 子コンポーネントの配置と接続のみ担当。個別フィルタの内部ロジックに関与しない |
+| `src/feed/notes.ts` | `module:feed` | ノート一覧の状態管理（`Writable<NoteMetadata[]>`） | store の更新は IPC レスポンス受信時・`create_note` / `delete_note` 成功時のみ。直接の手動操作禁止 |
+| `src/feed/filters.ts` | `module:feed` | フィルタ状態管理（`fromDate`, `toDate`, `tags`, `query`）。セッション内は状態保持、アプリ再起動時にデフォルト（7 日間）にリセット | フィルタ状態の唯一の信頼源。各フィルタ UI コンポーネントはこの store のみを更新する |
+| `src/feed/searchResults.ts` | `module:feed` | 検索結果のスニペット・ハイライト情報（`Writable<SearchResultEntry[] | null>`） | `search_notes` レスポンス受信時に更新。`list_notes` フォールバック時は `null` にリセット。`NoteCard.svelte` が表示モードの切替に使用 |
+| `src/feed/totalCount.ts` | `module:feed` | フィルタ条件に合致する全ノート数（`Writable<number>`） | `list_notes` / `search_notes` レスポンスの `total_count` で更新。`Feed.svelte` がスクロールロードの次ページ有無判定に使用 |
 | `src-tauri/src/storage/search.rs` | `module:feed` | 全文検索ロジック（ファイル全走査）、スニペット生成、ハイライト位置算出 | `commands/notes.rs` が直接ファイルを走査して検索することを禁止 |
 | `src-tauri/src/storage/file_manager.rs` の `list_files()` | `module:storage` | ファイル一覧取得・日付フィルタ・タグフィルタ適用 | `module:feed` が所有する `search.rs` はファイル読み取り時に `file_manager.rs` のバリデーション関数を利用する |
 

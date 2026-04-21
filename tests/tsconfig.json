@@ -11,7 +11,7 @@
     "isolatedModules": true,
     "types": ["@wdio/globals/types", "@wdio/mocha-framework", "expect-webdriverio", "node"],
     "paths": {
-      "$lib/*": ["../src/lib/*"]
+      "$lib/*": ["../src/*"]
     }
   },
   "include": ["**/*.ts"]

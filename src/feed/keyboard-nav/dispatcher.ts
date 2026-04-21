@@ -1,8 +1,8 @@
 import { get } from "svelte/store";
-import { notes, removeNote, loadOlderNotes } from "$lib/stores/notes";
-import { focusedIndex } from "$lib/stores/focus";
-import { trashNote, forceDeleteNote } from "$lib/utils/tauri-commands";
-import { handleCommandError } from "$lib/utils/error-handler";
+import { notes, removeNote, loadOlderNotes } from "$lib/feed/notes";
+import { focusedIndex } from "$lib/feed/focus";
+import { trashNote, forceDeleteNote } from "$lib/shell/tauri-commands";
+import { handleCommandError } from "$lib/shell/error-handler";
 
 export type TargetContext = "editor" | "search" | "none";
 

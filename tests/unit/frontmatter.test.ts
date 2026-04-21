@@ -6,7 +6,7 @@ import {
   generateNoteContent,
   reassemble,
   parseNote,
-} from "../../src/lib/frontmatter";
+} from "../../src/editor/frontmatter";
 
 describe("frontmatter", () => {
   describe("splitRaw", () => {

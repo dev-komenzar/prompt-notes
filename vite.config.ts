@@ -8,7 +8,7 @@ export default defineConfig({
   plugins: [svelte()],
   resolve: {
     alias: {
-      "$lib": path.resolve(__dirname, "./src/lib"),
+      "$lib": path.resolve(__dirname, "./src"),
     },
   },
   clearScreen: false,

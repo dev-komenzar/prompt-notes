@@ -1,10 +1,10 @@
 import { writable, get } from "svelte/store";
-import type { AppConfig } from "$lib/utils/tauri-commands";
+import type { AppConfig } from "$lib/shell/tauri-commands";
 import {
   getConfig as getConfigCmd,
   setConfig as setConfigCmd,
-} from "$lib/utils/tauri-commands";
-import { handleCommandError } from "$lib/utils/error-handler";
+} from "$lib/shell/tauri-commands";
+import { handleCommandError } from "$lib/shell/error-handler";
 
 export const config = writable<AppConfig>({ notes_directory: "" });
 

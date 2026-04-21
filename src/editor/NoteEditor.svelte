@@ -9,11 +9,11 @@
   import {
     readNote,
     saveNote as saveNoteCmd,
-  } from "$lib/utils/tauri-commands";
-  import { updateNote } from "$lib/stores/notes";
-  import { handleCommandError } from "$lib/utils/error-handler";
-  import { registerPendingSave, clearPendingSave } from "$lib/utils/window-close";
-  import { debounce } from "$lib/utils/debounce";
+  } from "$lib/shell/tauri-commands";
+  import { updateNote } from "$lib/feed/notes";
+  import { handleCommandError } from "$lib/shell/error-handler";
+  import { registerPendingSave, clearPendingSave } from "$lib/shell/window-close";
+  import { debounce } from "$lib/shell/debounce";
 
   interface EditorApi {
     getRawContent(): string;

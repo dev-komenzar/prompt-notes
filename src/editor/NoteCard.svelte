@@ -1,11 +1,11 @@
 <script lang="ts">
-  import type { NoteMetadata } from "$lib/utils/tauri-commands";
-  import { formatDisplayDate } from "$lib/utils/timestamp";
+  import type { NoteMetadata } from "$lib/shell/tauri-commands";
+  import { formatDisplayDate } from "$lib/storage/timestamp";
   import NoteEditor from "./NoteEditor.svelte";
   import CopyButton from "./CopyButton.svelte";
   import DeleteButton from "./DeleteButton.svelte";
-  import { removeNote } from "$lib/stores/notes";
-  import { extractBody } from "$lib/frontmatter";
+  import { removeNote } from "$lib/feed/notes";
+  import { extractBody } from "$lib/editor/frontmatter";
 
   interface EditorApi {
     getRawContent(): string;

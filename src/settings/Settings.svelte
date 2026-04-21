@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { config, saveConfig, loadConfig } from "$lib/stores/config";
-  import { moveNotes } from "$lib/utils/tauri-commands";
-  import { loadNotes } from "$lib/stores/notes";
-  import { handleCommandError } from "$lib/utils/error-handler";
+  import { config, saveConfig, loadConfig } from "$lib/settings/config";
+  import { moveNotes } from "$lib/shell/tauri-commands";
+  import { loadNotes } from "$lib/feed/notes";
+  import { handleCommandError } from "$lib/shell/error-handler";
   import { open } from "@tauri-apps/plugin-dialog";
 
   interface Props {

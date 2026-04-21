@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { trashNote, forceDeleteNote } from "$lib/utils/tauri-commands";
-  import { handleCommandError } from "$lib/utils/error-handler";
+  import { trashNote, forceDeleteNote } from "$lib/shell/tauri-commands";
+  import { handleCommandError } from "$lib/shell/error-handler";
 
   interface Props {
     filename: string;

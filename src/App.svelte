@@ -1,13 +1,13 @@
 <script lang="ts">
-  import Header from "$lib/components/Header.svelte";
-  import Feed from "$lib/components/Feed.svelte";
-  import Settings from "$lib/components/Settings.svelte";
-  import ErrorToast from "$lib/components/ErrorToast.svelte";
+  import Header from "$lib/feed/Header.svelte";
+  import Feed from "$lib/feed/Feed.svelte";
+  import Settings from "$lib/settings/Settings.svelte";
+  import ErrorToast from "$lib/shell/ErrorToast.svelte";
   import { onMount } from "svelte";
-  import { loadConfig } from "$lib/stores/config";
-  import { loadNotes } from "$lib/stores/notes";
-  import { setupWindowCloseHandler } from "$lib/utils/window-close";
-  import { setupGlobalShortcut } from "$lib/utils/global-shortcut";
+  import { loadConfig } from "$lib/settings/config";
+  import { loadNotes } from "$lib/feed/notes";
+  import { setupWindowCloseHandler } from "$lib/shell/window-close";
+  import { setupGlobalShortcut } from "$lib/shell/global-shortcut";
 
   let feedRef: { createNewNote: () => Promise<void> } | undefined = $state();
   let settingsOpen = $state(false);

@@ -266,7 +266,7 @@ sequenceDiagram
 | ファイル | 所有モジュール | 単一責務 | 再実装禁止範囲 |
 |---|---|---|---|
 | `src-tauri/src/storage/file_manager.rs` | `module:storage` | ファイル CRUD（作成・読み取り・上書き・削除）、ファイル名生成、ファイル名バリデーション、パストラバーサル防止 | 他のモジュール（`commands/`, `config/`）が `std::fs` を直接呼び出してノートファイルを操作することを禁止 |
-| `src-tauri/src/storage/frontmatter.rs` | `module:storage` | YAML frontmatter のパース・シリアライズ・正規化、ADR-008 body 意味論の Rust 側単一所有（`parse` / `reassemble` の往復冪等性保証）。frontmatter スキーマの単一信頼源 | フロントエンド `src/lib/frontmatter.ts` は編集モードコピー時の body 抽出用途に限定。ファイル I/O を伴う frontmatter の組み立ては Rust 側のみが実行 |
+| `src-tauri/src/storage/frontmatter.rs` | `module:storage` | YAML frontmatter のパース・シリアライズ・正規化、ADR-008 body 意味論の Rust 側単一所有（`parse` / `reassemble` の往復冪等性保証）。frontmatter スキーマの単一信頼源 | フロントエンド `src/editor/frontmatter.ts` は編集モードコピー時の body 抽出用途に限定。ファイル I/O を伴う frontmatter の組み立ては Rust 側のみが実行 |
 | `src-tauri/src/storage/search.rs` | `module:feed` | 全文検索ロジック（ファイル全走査）。`file_manager.rs` と `frontmatter.rs` を利用する | 検索のためのファイル読み取りは `search.rs` 経由。`commands/notes.rs` が直接ファイルを走査しない |
 
 ### 3.2 ファイル名フォーマットの所有権
@@ -277,7 +277,7 @@ sequenceDiagram
 |---|---|---|
 | ファイル名生成（タイムスタンプ → 文字列変換） | `module:storage` | `src-tauri/src/storage/file_manager.rs` の `generate_filename()` 関数 |
 | ファイル名バリデーション正規表現 | `module:storage` | `src-tauri/src/storage/file_manager.rs` の定数 `FILENAME_REGEX` |
-| ファイル名 → 日時変換（フロントエンド表示用） | `module:storage` が仕様を決定 | `src/lib/utils/timestamp.ts` が実装。ファイル名パターンの変更時は `file_manager.rs` と `timestamp.ts` の両方を同期更新 |
+| ファイル名 → 日時変換（フロントエンド表示用） | `module:storage` が仕様を決定 | `src/storage/timestamp.ts` が実装。ファイル名パターンの変更時は `file_manager.rs` と `timestamp.ts` の両方を同期更新 |
 
 ファイル名の正規表現パターン `^\d{4}-\d{2}-\d{2}T\d{6}\.md$` は `file_manager.rs` 内に定数として定義され、`commands/notes.rs` はこの定数をインポートして使用する。フロントエンドの `timestamp.ts` も同一のパターンに準拠するが、バリデーションの正式な実行ポイントは Rust 側のみである。
 
@@ -290,7 +290,7 @@ frontmatter のスキーマ定義と正規化ロジックは `storage/frontmatte
 | スキーマ定義（`tags` フィールドのみ） | `storage/frontmatter.rs` | 追加フィールドの導入は要件変更を必要とし、このファイルの変更がトリガーとなる |
 | パース（YAML → Rust 構造体） | `storage/frontmatter.rs` | `serde_yaml` クレートを使用。ADR-008 body 意味論（閉じフェンス `---\n` 直後の区切り `\n` を body に含めない）を Rust 側で単一所有 |
 | シリアライズ・再組み立て（Rust 構造体 → YAML 文字列 + body 連結） | `storage/frontmatter.rs` | 正規化された出力 `---\n<yaml>\n---\n\n<body>` を保証。`#[cfg(test)] mod tests` で往復冪等性を表明 |
-| 編集モードコピー時の body 抽出（TypeScript 本番実装） | `src/lib/frontmatter.ts`（`module:editor`） | CodeMirror 6 の未保存テキストから body を抽出する用途に限定。ADR-008 body 意味論を Rust 側と共通仕様として採用。IPC レスポンスの再パースには使用しない |
+| 編集モードコピー時の body 抽出（TypeScript 本番実装） | `src/editor/frontmatter.ts`（`module:editor`） | CodeMirror 6 の未保存テキストから body を抽出する用途に限定。ADR-008 body 意味論を Rust 側と共通仕様として採用。IPC レスポンスの再パースには使用しない |
 | ADR-008 共通仕様の検証（TypeScript スタブ） | `tests/unit/frontmatter.ts`（`module:storage` が所有） | `tests/unit/frontmatter.test.ts` から参照され、Rust 実装と TS 実装の共通仕様（往復冪等性）を検証 |
 
 ### 3.4 ディレクトリパス管理の所有権
@@ -382,7 +382,7 @@ pub struct NoteFrontmatter {
   ```
 - **N 回繰り返し不変条件（AC-STOR-06）**: `reassemble` を N 回繰り返し適用しても body 先頭に改行 `\n` が累積しないこと。Rust 側 `#[cfg(test)] mod tests` および TypeScript 側 `tests/unit/frontmatter.test.ts` の両方で検証する。
 
-この仕様は ADR-008 で確定した body 意味論の単一信頼源である。Rust 側 `storage/frontmatter.rs` がファイル I/O 経路を排他所有し、フロントエンド側の編集モードコピー時の body 抽出 (`src/lib/frontmatter.ts` の `extractBody` / `generateNoteContent`) も同一の body 意味論に従う（`docs/detailed_design/editor_clipboard_design.md` §3.3 および `detail:component_architecture` §4.11 参照）。Rust/TS 両実装のいずれかを変更した場合は両方のテストを必ず再実行する運用規約を設ける。
+この仕様は ADR-008 で確定した body 意味論の単一信頼源である。Rust 側 `storage/frontmatter.rs` がファイル I/O 経路を排他所有し、フロントエンド側の編集モードコピー時の body 抽出 (`src/editor/frontmatter.ts` の `extractBody` / `generateNoteContent`) も同一の body 意味論に従う（`docs/detailed_design/editor_clipboard_design.md` §3.3 および `detail:component_architecture` §4.11 参照）。Rust/TS 両実装のいずれかを変更した場合は両方のテストを必ず再実行する運用規約を設ける。
 
 ### 4.4 自動保存トリガーの実装
 
@@ -396,7 +396,7 @@ pub struct NoteFrontmatter {
 
 すべてのトリガーにおいて、保存処理は `tauri-commands.ts` の `saveNote()` 関数を経由し、Rust バックエンドの `save_note` コマンドで実行される。保存完了閾値は 100ms 以内である。
 
-**保存内容の構成:** フロントエンドは CodeMirror 6 エディタから取得した生の Markdown テキスト（frontmatter 含む）をそのまま Rust に送信する。フロントエンド側で frontmatter を分離・再構成する処理は行わない（編集モードコピー時の body 抽出は例外で、`src/lib/frontmatter.ts` が担当する）。Rust 側の `frontmatter.rs` が受信した内容を `parse` してタグと body を取り出し、`reassemble` で正規化した上でファイルに書き込む。IPC レスポンス `NoteMetadata` にはパース済みの `tags` と `body_preview` が含まれ、フロントエンドはそれらをそのまま表示モードに反映する。
+**保存内容の構成:** フロントエンドは CodeMirror 6 エディタから取得した生の Markdown テキスト（frontmatter 含む）をそのまま Rust に送信する。フロントエンド側で frontmatter を分離・再構成する処理は行わない（編集モードコピー時の body 抽出は例外で、`src/editor/frontmatter.ts` が担当する）。Rust 側の `frontmatter.rs` が受信した内容を `parse` してタグと body を取り出し、`reassemble` で正規化した上でファイルに書き込む。IPC レスポンス `NoteMetadata` にはパース済みの `tags` と `body_preview` が含まれ、フロントエンドはそれらをそのまま表示モードに反映する。
 
 ### 4.5 config.json のスキーマと永続化
 
@@ -599,10 +599,10 @@ pub struct SetConfigResult {
 
 ### 4.10 ADR-008 body 意味論の TypeScript 側との同期
 
-Rust 側 `storage/frontmatter.rs` と TypeScript 側 `src/lib/frontmatter.ts` は独立実装となるため、共通仕様からのドリフトを防ぐ運用規約を設ける（Component Architecture §4.11 準拠）。
+Rust 側 `storage/frontmatter.rs` と TypeScript 側 `src/editor/frontmatter.ts` は独立実装となるため、共通仕様からのドリフトを防ぐ運用規約を設ける（Component Architecture §4.11 準拠）。
 
 1. **仕様の単一情報源**: ADR-008 が body 定義・正規化レイアウト（`---\n<yaml>\n---\n\n<body>`）・body 空時の末尾 `\n` 残存・往復冪等性を規定する。両実装の doc コメントには ADR-008 へのリンクを記載する。
-2. **TypeScript 本番実装の適用範囲**: `src/lib/frontmatter.ts` は編集モードのコピー操作（CodeMirror 6 の未保存テキストから body を抽出して `copy_to_clipboard` に渡す経路）でのみ使用する。IPC レスポンスの frontmatter 再解析には使用しない。
+2. **TypeScript 本番実装の適用範囲**: `src/editor/frontmatter.ts` は編集モードのコピー操作（CodeMirror 6 の未保存テキストから body を抽出して `copy_to_clipboard` に渡す経路）でのみ使用する。IPC レスポンスの frontmatter 再解析には使用しない。
 3. **TypeScript スタブの検証**: `tests/unit/frontmatter.ts`（`splitRaw`, `serializeFrontmatter`）は `tests/unit/frontmatter.test.ts` から参照され、`parseFrontmatter → serializeFrontmatter → parseFrontmatter` の往復冪等性、および `generateNoteContent → extractBody → generateNoteContent` の擬似往復冪等性を表明する。本ファイルは `module:storage` が所有する。
 4. **Rust 側の検証**: `src-tauri/src/storage/frontmatter.rs` 末尾の `#[cfg(test)] mod tests` に `parse → reassemble → parse` の往復で `(tags, body)` が一致することを表明するテストを配置する。
 5. **回帰防止**: N 回繰り返しても body 先頭に改行 `\n` が累積しないこと（AC-STOR-06）をユニットテストで保証し、Rust/TS 両実装のいずれかを変更した場合は両方のテストを必ず再実行する。

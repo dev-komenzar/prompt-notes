@@ -1,13 +1,13 @@
 import { writable } from "svelte/store";
-import type { NoteMetadata } from "$lib/utils/tauri-commands";
+import type { NoteMetadata } from "$lib/shell/tauri-commands";
 import {
   listNotes as listNotesCmd,
   searchNotes as searchNotesCmd,
-} from "$lib/utils/tauri-commands";
+} from "$lib/shell/tauri-commands";
 import { filters } from "./filters";
 import { searchResults } from "./searchResults";
 import { totalCount } from "./totalCount";
-import { handleCommandError } from "$lib/utils/error-handler";
+import { handleCommandError } from "$lib/shell/error-handler";
 import { get } from "svelte/store";
 
 export const notes = writable<NoteMetadata[]>([]);

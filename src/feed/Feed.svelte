@@ -1,17 +1,17 @@
 <script lang="ts">
   import { flushSync } from "svelte";
-  import NoteCard from "./NoteCard.svelte";
+  import NoteCard from "$lib/editor/NoteCard.svelte";
   import SearchBar from "./SearchBar.svelte";
   import TagFilter from "./TagFilter.svelte";
   import DateFilter from "./DateFilter.svelte";
-  import { notes, loadNotes, loadMoreNotes, searchNotesAction, prependNote } from "$lib/stores/notes";
-  import { filters, setQuery, toggleTag, setDateRange, resetFilters } from "$lib/stores/filters";
-  import { searchResults } from "$lib/stores/searchResults";
-  import { totalCount } from "$lib/stores/totalCount";
-  import { focusedIndex } from "$lib/stores/focus";
-  import { handleKey as dispatchNavKey } from "$lib/features/keyboard-nav/dispatcher";
-  import { createNote } from "$lib/utils/tauri-commands";
-  import { handleCommandError } from "$lib/utils/error-handler";
+  import { notes, loadNotes, loadMoreNotes, searchNotesAction, prependNote } from "$lib/feed/notes";
+  import { filters, setQuery, toggleTag, setDateRange, resetFilters } from "$lib/feed/filters";
+  import { searchResults } from "$lib/feed/searchResults";
+  import { totalCount } from "$lib/feed/totalCount";
+  import { focusedIndex } from "$lib/feed/focus";
+  import { handleKey as dispatchNavKey } from "$lib/feed/keyboard-nav/dispatcher";
+  import { createNote } from "$lib/shell/tauri-commands";
+  import { handleCommandError } from "$lib/shell/error-handler";
 
   let editingFilename: string | null = $state(null);
 

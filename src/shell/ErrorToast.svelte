@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { errors, dismissError } from "$lib/utils/error-handler";
+  import { errors, dismissError } from "$lib/shell/error-handler";
 </script>
 
 {#if $errors.length > 0}

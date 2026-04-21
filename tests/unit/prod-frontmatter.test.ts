@@ -4,7 +4,7 @@
 // newline directly after the closing fence. These tests lock that behavior in.
 
 import { describe, it, expect } from 'vitest';
-import { generateNoteContent, extractBody } from '../../src/lib/frontmatter';
+import { generateNoteContent, extractBody } from '../../src/editor/frontmatter';
 
 describe('ADR-008 prod frontmatter round-trip idempotency', () => {
   const cases: Array<{ name: string; body: string }> = [

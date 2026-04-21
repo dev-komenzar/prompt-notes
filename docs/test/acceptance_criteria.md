@@ -442,7 +442,7 @@ codd:
 - **期待結果**:
   1. 再度開いた編集モードの本文が、保存前の本文と完全に一致する（先頭に改行 `\n` が追加されない）
   2. 上記の保存→再読込を任意の回数繰り返しても、本文先頭に改行が累積しない
-- **制約**: ADR-008 で定めた body 意味論（body は frontmatter 閉じフェンスおよびその直後の区切り `\n` を含まない）に準拠し、Rust `storage/frontmatter.rs` および TypeScript `src/lib/frontmatter.ts` / `tests/unit/frontmatter.ts` の両側で `parse → serialize → parse` の往復冪等性が成立すること。
+- **制約**: ADR-008 で定めた body 意味論（body は frontmatter 閉じフェンスおよびその直後の区切り `\n` を含まない）に準拠し、Rust `storage/frontmatter.rs` および TypeScript `src/editor/frontmatter.ts` / `tests/unit/frontmatter.ts` の両側で `parse → serialize → parse` の往復冪等性が成立すること。
 
 ### module:feed — フィード表示・検索・フィルタ機能
 
