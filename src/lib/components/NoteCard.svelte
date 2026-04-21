@@ -15,10 +15,12 @@
     note: NoteMetadata;
     matchedLine?: string;
     isEditing: boolean;
+    isFocused?: boolean;
     onClick: () => void;
+    onExit?: (filename: string) => void;
   }
 
-  let { note, matchedLine, isEditing, onClick }: Props = $props();
+  let { note, matchedLine, isEditing, isFocused = false, onClick, onExit }: Props = $props();
 
   let editorApi: EditorApi | null = $state(null);
 
@@ -60,6 +62,7 @@
   role="button"
   tabindex="0"
   data-testid="note-card"
+  data-focused={isFocused ? "true" : undefined}
   aria-label="Note {note.filename}"
 >
   <div class="note-card-header">
@@ -78,7 +81,11 @@
   </div>
 
   {#if isEditing}
-    <NoteEditor filename={note.filename} bind:api={editorApi} />
+    <NoteEditor
+      filename={note.filename}
+      bind:api={editorApi}
+      onExit={() => onExit?.(note.filename)}
+    />
   {:else if matchedLine}
     <p class="note-body">{matchedLine}</p>
   {:else}
@@ -104,6 +111,9 @@
   .note-card.editing {
     cursor: text;
     background: var(--surface-secondary);
+  }
+  .note-card[data-focused="true"] {
+    background: var(--surface-focus, var(--surface-secondary));
   }
   .note-card-header {
     display: flex;

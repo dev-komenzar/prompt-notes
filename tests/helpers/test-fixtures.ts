@@ -51,6 +51,47 @@ export function seedRecentNotes(notesDir: string, count: number): string[] {
   return filenames;
 }
 
+/**
+ * Seed the 4-card fixture used by AC-NAV-01〜10.
+ *
+ * Creates notes A, B, C, D dated today, today-1day, today-2day, today-3day
+ * respectively. All four fall inside the default 7-day filter and share the
+ * `nav-test` tag for easy identification.
+ *
+ * Returns filenames in newest-first order (index 0 = A = newest), matching
+ * the feed's default display order.
+ */
+export function seedNavigationFixture(notesDir: string): string[] {
+  const bodies = [
+    'Navigation fixture note A',
+    'Navigation fixture note B',
+    'Navigation fixture note C',
+    'Navigation fixture note D',
+  ];
+  const filenames: string[] = [];
+  const now = new Date();
+  for (let i = 0; i < 4; i++) {
+    const date = new Date(now);
+    date.setDate(date.getDate() - i);
+    date.setSeconds(date.getSeconds() - i);
+    filenames.push(seedNote(notesDir, date, ['nav-test'], bodies[i]));
+  }
+  return filenames;
+}
+
+/**
+ * Seed a single note dated `daysAgo` days in the past — used by AC-NAV-10b to
+ * populate an out-of-default-range note that "古いノートロード" can reach.
+ *
+ * Caller is expected to pass `daysAgo > 7` so the note lies outside the
+ * default recent-7-days filter.
+ */
+export function seedOldNote(notesDir: string, daysAgo: number, body: string): string {
+  const date = new Date();
+  date.setDate(date.getDate() - daysAgo);
+  return seedNote(notesDir, date, ['nav-test-old'], body);
+}
+
 export function listNotesOnDisk(notesDir: string): string[] {
   const dir = path.join(notesDir, 'notes');
   if (!fs.existsSync(dir)) return [];

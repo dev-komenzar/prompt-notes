@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { flushSync } from "svelte";
   import NoteCard from "./NoteCard.svelte";
   import SearchBar from "./SearchBar.svelte";
   import TagFilter from "./TagFilter.svelte";
@@ -7,6 +8,8 @@
   import { filters, setQuery, toggleTag, setDateRange, resetFilters } from "$lib/stores/filters";
   import { searchResults } from "$lib/stores/searchResults";
   import { totalCount } from "$lib/stores/totalCount";
+  import { focusedIndex } from "$lib/stores/focus";
+  import { handleKey as dispatchNavKey } from "$lib/features/keyboard-nav/dispatcher";
   import { createNote } from "$lib/utils/tauri-commands";
   import { handleCommandError } from "$lib/utils/error-handler";
 
@@ -37,13 +40,30 @@
     if (!target) return;
     if (!target.closest('[data-testid="note-card"]')) {
       editingFilename = null;
+      focusedIndex.set(null);
     }
   }
 
-  function handleOutsideKeydown(event: KeyboardEvent) {
-    if (event.key === "Escape" && editingFilename !== null) {
+  function handleEditorExit(filename: string) {
+    const i = $notes.findIndex((n) => n.filename === filename);
+    flushSync(() => {
       editingFilename = null;
-    }
+      if (i >= 0) focusedIndex.set(i);
+    });
+    // Poke the DOM so tauri-driver invalidates its cached `.cm-editor`
+    // reference. Without this, `browser.$('.cm-editor').isExisting()` can
+    // return true for the detached node even after Svelte unmount.
+    document.body.setAttribute("data-nav-cycle", String(performance.now()));
+  }
+
+  function handleWindowKeydown(event: KeyboardEvent) {
+    void dispatchNavKey(event, {
+      getEditingFilename: () => editingFilename,
+      setEditingFilename: (filename) => {
+        editingFilename = filename;
+      },
+      exitEditing: handleEditorExit,
+    });
   }
 
   async function handleSearch(query: string) {
@@ -67,7 +87,7 @@
   }
 </script>
 
-<svelte:window onkeydown={handleOutsideKeydown} />
+<svelte:window onkeydown={handleWindowKeydown} />
 
 <div
   class="feed-container"
@@ -99,17 +119,20 @@
           note={result.metadata}
           matchedLine={result.matched_line}
           isEditing={editingFilename === result.metadata.filename}
+          isFocused={false}
           onClick={() => handleCardClick(result.metadata.filename)}
         />
       {:else}
         <p class="feed-empty">No search results found.</p>
       {/each}
     {:else}
-      {#each $notes as note (note.filename)}
+      {#each $notes as note, i (note.filename)}
         <NoteCard
           note={note}
           isEditing={editingFilename === note.filename}
+          isFocused={i === $focusedIndex && editingFilename === null}
           onClick={() => handleCardClick(note.filename)}
+          onExit={handleEditorExit}
         />
       {:else}
         <p class="feed-empty">No notes yet. Create one!</p>

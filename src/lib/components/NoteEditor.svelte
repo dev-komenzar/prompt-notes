@@ -22,9 +22,10 @@
   interface Props {
     filename: string;
     api?: EditorApi | null;
+    onExit?: () => void;
   }
 
-  let { filename, api = $bindable() }: Props = $props();
+  let { filename, api = $bindable(), onExit }: Props = $props();
 
   let editorContainer: HTMLDivElement;
   let view: EditorView | null = null;
@@ -61,7 +62,18 @@
       doc: content,
       selection: { anchor: content.length },
       extensions: [
-        keymap.of([...defaultKeymap, ...historyKeymap]),
+        keymap.of([
+          {
+            key: "Escape",
+            run: () => {
+              void doSave();
+              onExit?.();
+              return true;
+            },
+          },
+          ...defaultKeymap,
+          ...historyKeymap,
+        ]),
         history(),
         markdown(),
         syntaxHighlighting(defaultHighlightStyle),
@@ -77,6 +89,7 @@
     });
 
     view = new EditorView({ state, parent: editorContainer });
+    (window as unknown as { __cmView?: EditorView }).__cmView = view;
     lastSavedContent = content;
     view.focus();
   }
@@ -104,6 +117,8 @@
           .catch(() => {});
       }
     }
+    const w = window as unknown as { __cmView?: EditorView };
+    if (w.__cmView === view) delete w.__cmView;
     view?.destroy();
     view = null;
     api = null;

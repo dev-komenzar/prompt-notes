@@ -50,6 +50,23 @@ export async function loadMoreNotes(): Promise<void> {
   }
 }
 
+export async function loadOlderNotes(): Promise<void> {
+  try {
+    const f = get(filters);
+    const result = await listNotesCmd(
+      0,
+      500,
+      f.tags.length > 0 ? f.tags : undefined,
+      "1970-01-01",
+      "9999-12-31"
+    );
+    notes.set(result.notes);
+    totalCount.set(result.total_count);
+  } catch (error) {
+    handleCommandError(error);
+  }
+}
+
 export async function searchNotesAction(query: string): Promise<void> {
   if (!query.trim()) {
     searchResults.set(null);
