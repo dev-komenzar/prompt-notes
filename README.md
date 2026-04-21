@@ -101,11 +101,31 @@ This starts Vite + Tauri with hot reload for the frontend and `cargo run` for th
 <!-- R-USAGE-02 -->
 ### Keyboard shortcuts
 
+**Creating a note**
+
 | Shortcut | Action |
 | --- | --- |
 | `Cmd+N` (macOS) / `Ctrl+N` (Linux) | Create a new note |
 
-More shortcuts will be listed here once they are added to the product specification.
+**Feed navigation** — active when a card is focused or when nothing is focused
+
+| Shortcut | Action |
+| --- | --- |
+| `↑` / `↓` | Move focus to the adjacent card. From the no-focus state, either key focuses the newest card at the top of the feed. Pressing `↓` at the bottom loads older notes (no-op if there are none). |
+| `Enter` | Enter edit mode on the focused card |
+| `Esc` (card focused) | Clear the card focus |
+| `c` | Copy the focused card's body to the clipboard (same as the Copy button) |
+| `d` or `Delete` | Delete the focused note immediately, without a confirmation dialog. Focus moves to the next card below, or above if there is none; when everything is deleted, focus is cleared. |
+
+**Leaving edit mode**
+
+| Shortcut | Action |
+| --- | --- |
+| `Esc` (in edit mode) | Auto-save and return to view mode. Focus stays on that card. |
+
+Arrow keys drive card navigation only while a card is focused or nothing is focused. In edit mode they move the CodeMirror cursor, and while the search bar has focus they operate on the text input and filters.
+
+Additional shortcuts will be listed here only after they are added to `docs/requirements/requirements.md`.
 
 <!-- R-USAGE-03 -->
 ### Top feed
