@@ -3,7 +3,8 @@
   import { EditorState } from "@codemirror/state";
   import { EditorView, keymap } from "@codemirror/view";
   import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-  import { markdown } from "@codemirror/lang-markdown";
+  import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
+  import { languages } from "@codemirror/language-data";
   import { syntaxHighlighting, defaultHighlightStyle } from "@codemirror/language";
   import { frontmatterHighlight } from "./frontmatter-decoration";
   import {
@@ -27,7 +28,7 @@
 
   let { filename, api = $bindable(), onExit }: Props = $props();
 
-  let editorContainer: HTMLDivElement;
+  let editorContainer: HTMLDivElement | undefined;
   let view: EditorView | null = null;
   let isDirty = false;
   let lastSavedContent = "";
@@ -75,7 +76,7 @@
           ...historyKeymap,
         ]),
         history(),
-        markdown(),
+        markdown({ base: markdownLanguage, codeLanguages: languages }),
         syntaxHighlighting(defaultHighlightStyle),
         frontmatterHighlight(),
         EditorView.lineWrapping,
@@ -88,8 +89,7 @@
       ],
     });
 
-    view = new EditorView({ state, parent: editorContainer });
-    (window as unknown as { __cmView?: EditorView }).__cmView = view;
+    view = new EditorView({ state, parent: editorContainer as HTMLDivElement });
     lastSavedContent = content;
     view.focus();
   }
@@ -117,18 +117,21 @@
           .catch(() => {});
       }
     }
-    const w = window as unknown as { __cmView?: EditorView };
-    if (w.__cmView === view) delete w.__cmView;
     view?.destroy();
     view = null;
     api = null;
   });
 </script>
 
-<div class="note-editor" bind:this={editorContainer}></div>
+<div class="note-editor">
+  <div class="editor-container" bind:this={editorContainer}></div>
+</div>
 
 <style>
   .note-editor {
+    width: 100%;
+  }
+  .editor-container {
     width: 100%;
   }
   .note-editor :global(.cm-editor) {

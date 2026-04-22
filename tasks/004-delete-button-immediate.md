@@ -29,11 +29,21 @@
 
 ## 完遂条件
 
-- [ ] `DeleteButton.svelte` から `confirming` state と `setTimeout` ロジックを削除
-- [ ] `handleDelete()` は即座に `trashNote()` を呼ぶ（フォールバックロジックは保持）
-- [ ] ボタンテキスト・視覚フィードバックの仕様を決め直す（即時削除なので `Delete` ラベル単独で OK）
+- [x] `DeleteButton.svelte` から `confirming` state と `setTimeout` ロジックを削除
+- [x] `handleDelete()` は即座に `trashNote()` を呼ぶ（フォールバックロジックは保持）
+- [x] ボタンテキスト・視覚フィードバックの仕様を決め直す（即時削除なので `Delete` ラベル単独で OK）
+- [x] **(drift #2)** trash 失敗時は `forceDeleteNote()` にサイレントフォールバックせず、**確認ダイアログ（`削除する` / `キャンセル`）を表示**してユーザー明示同意後に完全削除を実行する
+- [x] `docs/detailed_design/editor_clipboard_design.md` の DeleteButton 記述が requirements に揃っているか再確認
 - [ ] 該当する受入基準テスト（AC-EDIT-07）を書き、GREEN 化させる
-- [ ] `docs/detailed_design/editor_clipboard_design.md` の DeleteButton 記述が requirements に揃っているか再確認
+
+## Drift 判定サマリー (2026-04-22 HITL レビュー)
+
+`codd propagate --diff 21b1020` で検出された 16 件の editor モジュール drift を HITL 判定した結果、本タスクに直接関係する項目は以下の 2 件:
+
+- **Drift #1 (spec 勝ち)**: 2 段階確認 (`confirming` + 3 秒タイムアウト) を撤去し、`trashNote()` を即時呼び出し (requirements.md L133 準拠)
+- **Drift #2 (spec 勝ち)**: trash 失敗時の確認ダイアログを実装 (editor_clipboard_design.md §4.4b / OQ-EDIT-004 準拠)
+
+残り 14 件の判定結果は `docs/detailed_design/editor_clipboard_design.md` および `docs/requirements/requirements.md` の更新に反映済み。
 
 ## 関連
 

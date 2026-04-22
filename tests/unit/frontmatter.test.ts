@@ -1,97 +1,72 @@
 import { describe, it, expect } from "vitest";
 import {
-  splitRaw,
-  parseTags,
   extractBody,
   generateNoteContent,
-  reassemble,
-  parseNote,
 } from "../../src/editor/frontmatter";
 
-describe("frontmatter", () => {
-  describe("splitRaw", () => {
-    it("should split frontmatter and body", () => {
-      const raw = "---\ntags: []\n---\n\nHello world";
-      const { frontmatter, body } = splitRaw(raw);
-      expect(frontmatter).toBe("---\ntags: []\n---\n");
-      expect(body).toBe("Hello world");
-    });
-
-    it("should handle no frontmatter", () => {
-      const raw = "Just text";
-      const { frontmatter, body } = splitRaw(raw);
-      expect(frontmatter).toBe("");
-      expect(body).toBe("Just text");
-    });
-  });
-
-  describe("parseTags", () => {
-    it("should parse inline tags", () => {
-      const fm = "---\ntags: [rust, tauri]\n---\n";
-      expect(parseTags(fm)).toEqual(["rust", "tauri"]);
-    });
-
-    it("should parse block tags", () => {
-      const fm = "---\ntags:\n  - rust\n  - tauri\n---\n";
-      expect(parseTags(fm)).toEqual(["rust", "tauri"]);
-    });
-
-    it("should handle empty tags", () => {
-      const fm = "---\ntags: []\n---\n";
-      expect(parseTags(fm)).toEqual([]);
-    });
-  });
-
+describe("frontmatter public API", () => {
   describe("extractBody", () => {
-    it("should extract body content", () => {
-      const raw = "---\ntags: []\n---\n\nHello";
-      expect(extractBody(raw)).toBe("Hello");
+    it("extracts body after frontmatter", () => {
+      const raw = "---\ntags: []\n---\n\nHello world";
+      expect(extractBody(raw)).toBe("Hello world");
+    });
+
+    it("returns raw text when frontmatter is absent", () => {
+      expect(extractBody("Just text")).toBe("Just text");
+    });
+
+    it("returns empty body when only frontmatter is present", () => {
+      const raw = "---\ntags: []\n---\n\n";
+      expect(extractBody(raw)).toBe("");
+    });
+
+    it("preserves body with multiple lines", () => {
+      const raw = "---\ntags: []\n---\n\nLine 1\nLine 2\nLine 3";
+      expect(extractBody(raw)).toBe("Line 1\nLine 2\nLine 3");
     });
   });
 
   describe("generateNoteContent", () => {
-    it("should generate with empty tags", () => {
+    it("generates with empty tags (inline [])", () => {
       const result = generateNoteContent([], "Body");
       expect(result).toBe("---\ntags: []\n---\n\nBody");
     });
 
-    it("should generate with tags", () => {
+    it("generates with block-style tags", () => {
       const result = generateNoteContent(["a", "b"], "Body");
       expect(result).toBe("---\ntags:\n  - a\n  - b\n---\n\nBody");
+    });
+
+    it("generates with empty body (retains trailing separator)", () => {
+      const result = generateNoteContent([], "");
+      expect(result).toBe("---\ntags: []\n---\n\n");
     });
   });
 
   describe("round-trip idempotency (ADR-008 / AC-STOR-06)", () => {
-    const cases = [
-      "---\ntags: []\n---\n\nSimple body",
-      "---\ntags:\n  - rust\n  - tauri\n---\n\nMulti-tag body",
-      "---\ntags: []\n---\n\n",
-      "---\ntags:\n  - test\n---\n\nLine 1\nLine 2\nLine 3",
+    const cases: Array<{ tags: string[]; body: string }> = [
+      { tags: [], body: "Simple body" },
+      { tags: ["rust", "tauri"], body: "Multi-tag body" },
+      { tags: [], body: "" },
+      { tags: ["test"], body: "Line 1\nLine 2\nLine 3" },
     ];
 
-    for (const raw of cases) {
-      it(`should round-trip: ${raw.substring(0, 30)}...`, () => {
-        const parsed = parseNote(raw);
-        const regenerated = generateNoteContent(parsed.tags, parsed.body);
-        expect(regenerated).toBe(raw);
+    for (const { tags, body } of cases) {
+      const label = body.substring(0, 20) || "(empty)";
+
+      it(`generateNoteContent → extractBody preserves body: ${label}`, () => {
+        const raw = generateNoteContent(tags, body);
+        expect(extractBody(raw)).toBe(body);
       });
 
-      it(`should be idempotent over 10 iterations: ${raw.substring(0, 30)}...`, () => {
-        let current = raw;
+      it(`idempotent over 10 iterations: ${label}`, () => {
+        let currentBody = body;
         for (let i = 0; i < 10; i++) {
-          const p = parseNote(current);
-          current = generateNoteContent(p.tags, p.body);
+          const raw = generateNoteContent(tags, currentBody);
+          currentBody = extractBody(raw);
         }
-        expect(current).toBe(raw);
+        expect(currentBody).toBe(body);
       });
     }
-  });
-
-  describe("reassemble", () => {
-    it("should reassemble frontmatter and body", () => {
-      const fm = "---\ntags: []\n---\n";
-      const body = "Hello";
-      expect(reassemble(fm, body)).toBe("---\ntags: []\n---\n\nHello");
-    });
   });
 });

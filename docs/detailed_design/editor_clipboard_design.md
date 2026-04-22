@@ -75,7 +75,7 @@ stateDiagram-v2
     }
 
     ViewMode --> EditMode: カードクリック
-    EditMode --> Saving: カード外クリック<br/>/ 別カードクリック<br/>/ Cmd+N
+    EditMode --> Saving: カード外クリック<br/>/ 別カードクリック<br/>/ Cmd+N<br/>/ Escape キー
     Saving --> ViewMode: save_note 成功<br/>(EditorView.destroy())
     Saving --> EditMode: save_note 失敗<br/>(エラー表示、エディタ維持)
 
@@ -274,7 +274,7 @@ ViewMode におけるタグ表示と本文プレビューは、`list_notes` / `r
 | `NoteEditor.svelte` | CodeMirror 6 インスタンスのライフサイクル（生成・破棄）、Markdown シンタックスハイライト拡張の構成、frontmatter 背景色装飾の適用 | Markdown の HTML レンダリング / プレビュー、タイトル入力欄の実装、`invoke` の直接呼び出し |
 | `CopyButton.svelte` | 1 クリックコピー UI、コピー成功/失敗の視覚フィードバック（ラベル変化） | `navigator.clipboard` API の使用、frontmatter を含むテキストのコピー |
 | `DeleteButton.svelte` | 削除操作 UI、ゴミ箱移動失敗時の完全削除確認ダイアログ表示 | ファイルシステムへの直接アクセス |
-| `src/editor/frontmatter.ts` | **編集モードのコピー操作専用**の body 抽出 (`extractBody`) と本文再構築 (`generateNoteContent`)。ADR-008 body 意味論の TypeScript 本番実装 | IPC レスポンスの frontmatter 再解析、ファイル I/O 経路での利用（Rust 側 `storage/frontmatter.rs` が排他所有） |
+| `src/editor/frontmatter.ts` | **編集モードのコピー操作 / ViewMode コピー時の `readNote()` レスポンス整形専用**の body 抽出 (`extractBody`) と本文再構築 (`generateNoteContent`)。ADR-008 body 意味論の TypeScript 本番実装。**公開 API はこの 2 関数のみ**（内部ヘルパーは export しない） | IPC レスポンス (`list_notes` / `search_notes` の `NoteMetadata`) の frontmatter 再解析、ファイル I/O 経路での利用（Rust 側 `storage/frontmatter.rs` が排他所有）、`parseTags` 等の内部実装の外部利用 |
 
 ### 3.2 モジュール間の依存と所有権境界
 
@@ -327,14 +327,19 @@ import { EditorView, keymap } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
-import { defaultKeymap } from "@codemirror/commands";
+import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { syntaxHighlighting, defaultHighlightStyle } from "@codemirror/language";
 import { frontmatterDecoration } from "./frontmatter-decoration";
 
 const extensions = [
+  history(),
   markdown({ base: markdownLanguage, codeLanguages: languages }),
   syntaxHighlighting(defaultHighlightStyle),
-  keymap.of(defaultKeymap),
+  keymap.of([
+    { key: "Escape", run: exitEditMode },
+    ...defaultKeymap,
+    ...historyKeymap,
+  ]),
   frontmatterDecoration(),
   EditorView.theme({
     "&": { height: "100%", fontSize: "14px" },
@@ -344,6 +349,10 @@ const extensions = [
   EditorView.lineWrapping,
 ];
 ```
+
+**Undo/Redo サポート (AC-EDIT-XX / requirements):** `history()` 拡張と `historyKeymap` を必須とする。これにより `Cmd+Z` / `Ctrl+Z` で元に戻し、`Cmd+Shift+Z` / `Ctrl+Y` でやり直しが可能。ブラウザ標準の contentEditable Undo 挙動に頼らず、CodeMirror 6 の履歴管理を正規の仕組みとする。
+
+**Escape キーによる編集終了:** `Escape` キーを押下すると現在の Doc を保存して ViewMode に戻る（詳細は §4.6 自動保存参照）。この挙動は `defaultKeymap` の前段にバインドし、CodeMirror 標準コマンドが上書きしないようにする。
 
 **禁止される拡張:**
 - `@codemirror/lang-html` やその他の HTML レンダリング関連拡張
@@ -397,15 +406,17 @@ const frontmatterDecoration = () => ViewPlugin.fromClass(
 );
 ```
 
-対応する CSS:
+対応する CSS は `EditorView.baseTheme({...})` で拡張自体に同梱し、以下の CSS カスタムプロパティを参照する:
 
-```css
-.cm-frontmatter-line {
-  background-color: rgba(59, 130, 246, 0.08);
-}
+```typescript
+EditorView.baseTheme({
+  ".cm-frontmatter-line": {
+    backgroundColor: "var(--frontmatter-bg)",
+  },
+}),
 ```
 
-この背景色は frontmatter 領域の各行に適用され、ユーザーが frontmatter 部分と本文部分を一目で区別できるようにする。背景色は半透明の青系色で、ダークモード非対応の現仕様では固定値とする。本設計は制約 1「frontmatter 領域は背景色で視覚的に区別必須」に準拠する。
+`--frontmatter-bg` は `src/styles/global.css` で定義し、ライトモード / ダークモードそれぞれで視認性の高い控えめな背景色を提供する（例: ライト `#f8f9fa` / ダーク `#252526`）。ユーザーの OS 設定に追従した `@media (prefers-color-scheme: dark)` で切り替わる。本設計は制約 1「frontmatter 領域は背景色で視覚的に区別必須」に準拠する。
 
 ### 4.3 タイトル入力欄の不在
 
@@ -432,20 +443,42 @@ const frontmatterDecoration = () => ViewPlugin.fromClass(
 | IPC 経路 | `tauri-commands.ts` の `copyToClipboard(text)` → `commands/clipboard.rs` の `copy_to_clipboard` → Tauri `clipboard-manager` プラグイン |
 | ラベル表記 | 既定: `Copy`（テキスト）。成功時: `✓ Copied`。失敗時: `✕ Failed`。**絵文字単体での表示は禁止**（描画フォントに依存して不可視化するリスクがあるため、テキストとの併記または SVG アイコンを用いる） |
 | 視覚フィードバック | コピー成功時: ラベルを `✓ Copied` に変更し、`color: var(--success)` および同色の `border-color` を適用。2,000ms 後に既定の `Copy` ラベルへ復帰 |
-| エラー時 | コピー失敗時: ラベルを `✕ Failed` に変更し、`color: var(--danger)` および同色の `border-color` を適用。3,000ms 後に既定へ復帰。`TauriCommandError { code: "CLIPBOARD_FAILED" }` をコンソールに出力 |
-| スタイル基盤 | プロジェクトは Tailwind を採用しないため、**カラー指定は `src/styles/global.css` で定義する CSS カスタムプロパティ**（`--surface`, `--surface-hover`, `--border`, `--text`, `--success`, `--danger`, `--accent`）を使用する。デフォルト時はカード背景と区別できる枠線（`1px solid var(--border)`）と背景（`var(--surface)`）を持ち、ホバー時は `var(--surface-hover)` + `var(--accent)` 枠で強調する |
+| エラー時 | コピー失敗時: ラベルを `✕ Failed` に変更し、`color: var(--danger)` および同色の `border-color` を適用。3,000ms 後に既定へ復帰。加えて `module:shell` の `handleCommandError()` 経由でグローバルトースト (`ErrorToast`) にも通知する |
+| 状態機械 | `idle → copying → success | error → idle` の遷移を `state: 'idle' | 'copying' | 'success' | 'error'` で管理する。`idle` 以外のとき `disabled` を立てて連打を防止 |
+| テスト属性 | `data-testid="copy-button"` を付与（E2E: `navigation.spec.ts` / `inline-editing-invariant.spec.ts` が参照） |
+| スタイル基盤 | プロジェクトは Tailwind を採用しないため、**カラー指定は `src/styles/global.css` で定義する CSS カスタムプロパティ**（`--surface`, `--surface-secondary`, `--border`, `--text`, `--success`, `--danger`, `--accent`）を使用する。デフォルト時はカード背景と区別できる枠線（`1px solid var(--border)`）と背景（`var(--surface)`）を持ち、ホバー時は `var(--surface-secondary)` + `var(--accent)` 枠で強調する |
 | 連打防止 | フィードバック表示中（2,000ms / 3,000ms）はボタンを `disabled` にし、重複 IPC 呼び出しを防止 |
 | 視認性要件 | DOM への描画だけでなく、bounding box の幅・高さがいずれも 0 でないこと、親 (`NoteCard` / `Feed`) の `overflow` 制約・flex 縮小によりクリップされないこと、`elementFromPoint()` でボタン要素が取得できること（被覆されていないこと）。AC-EDIT-06 / AC-EDIT-06b の否定条件と一致する |
 
 ```svelte
+<script lang="ts">
+  type CopyState = 'idle' | 'copying' | 'success' | 'error';
+  let state = $state<CopyState>('idle');
+
+  async function handleCopy() {
+    if (state !== 'idle') return;
+    state = 'copying';
+    try {
+      const text = await getContent();
+      await copyToClipboard(text);
+      state = 'success';
+      setTimeout(() => { if (state === 'success') state = 'idle'; }, 2000);
+    } catch (error) {
+      state = 'error';
+      handleCommandError(error);
+      setTimeout(() => { if (state === 'error') state = 'idle'; }, 3000);
+    }
+  }
+</script>
+
 <button
   class="copy-btn"
   class:success={state === 'success'}
   class:error={state === 'error'}
-  on:click={handleCopy}
-  disabled={copying}
-  aria-label="Copy note body"
-  title="本文をコピー"
+  onclick={handleCopy}
+  disabled={state !== 'idle'}
+  aria-label="Copy note body to clipboard"
+  data-testid="copy-button"
 >
   {#if state === 'success'}✓ Copied{:else if state === 'error'}✕ Failed{:else}Copy{/if}
 </button>
@@ -460,8 +493,8 @@ const frontmatterDecoration = () => ViewPlugin.fromClass(
     color: var(--text);
     transition: all 0.15s;
   }
-  .copy-btn:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--accent); }
-  .copy-btn:disabled { opacity: 0.5; }
+  .copy-btn:hover:not(:disabled) { background: var(--surface-secondary); border-color: var(--accent); }
+  .copy-btn:disabled { opacity: 0.6; cursor: not-allowed; }
   .success { color: var(--success); border-color: var(--success); }
   .error { color: var(--danger); border-color: var(--danger); }
 </style>
@@ -477,26 +510,69 @@ const frontmatterDecoration = () => ViewPlugin.fromClass(
 |---|---|
 | 表示条件 | `NoteCard.svelte` の表示モード（`{:else}` 分岐内）のフッタ領域に常時マウントされる。編集モード中は `NoteEditor` がカード内を占有するため非表示で良い |
 | ラベル表記 | 既定: `Delete`（テキスト）。**絵文字単体での表示は禁止**。確認ダイアログ表示時は `削除する` / `キャンセル` のボタンに置き換わる |
-| IPC 経路 | `tauri-commands.ts` の `deleteNote(filename)` → `commands/notes.rs` の `delete_note` → `trash` クレートで OS のゴミ箱へ移動。ゴミ箱が利用不可な場合 `TauriCommandError { code: "TRASH_FAILED" }` を返却し、UI 側で確認ダイアログを表示 → `forceDeleteNote()` で `std::fs::remove_file()` による完全削除を行う（OQ-EDIT-004 / OQ-ARCH-003 の決定に従う） |
-| イベント | 削除成功時に `dispatch("deleted")` を発火し、親 `NoteCard` 経由で `Feed` の `notes` store からノートを除去する |
-| 連打防止 | IPC 処理中は `disabled` にし、二重発行を防止 |
-| スタイル基盤 | プロジェクトは Tailwind を採用しないため、カラー指定は `src/styles/global.css` の CSS カスタムプロパティ（`--surface`, `--surface-hover`, `--border`, `--danger`）を使用する。デフォルト時は枠線（`1px solid var(--border)`）と背景（`var(--surface)`）、文字色は危険操作を示す `var(--danger)`、ホバー時に枠線も `var(--danger)` に変化させる |
+| IPC 経路 | `tauri-commands.ts` の `trashNote(filename)` → `commands/notes.rs` の `delete_note` → `trash` クレートで OS のゴミ箱へ移動。**成功時は確認ダイアログを挟まず即時削除**（requirements.md §機能要件 ノートカード: 「確認ダイアログなし、即時削除」に準拠）。ゴミ箱が利用不可な場合 `TauriCommandError { code: "TRASH_FAILED" }` を返却し、**UI 側で確認ダイアログを表示 → ユーザーが明示同意した場合のみ `forceDeleteNote()` で `std::fs::remove_file()` による完全削除を行う**（OQ-EDIT-004 / OQ-ARCH-003 の決定に従う。ゴミ箱経由なら復元可能だが、完全削除は復元不能のため同意を要する） |
+| イベント | 削除成功時に `onDeleted()` プロパティコールバックを呼び、親 `NoteCard` 経由で `Feed` の `notes` store からノートを除去する |
+| 状態管理 | `deleting: boolean` (IPC in-flight) と `confirmForce: boolean` (完全削除確認ダイアログ表示) の 2 つの状態フラグを持つ。`deleting` 中はボタンを `disabled` にし、二重発行を防止 |
+| テスト属性 | 通常状態: `data-testid="delete-button"`。確認ダイアログ: `data-testid="force-delete-confirm"` / `data-testid="force-delete-cancel"` |
+| スタイル基盤 | プロジェクトは Tailwind を採用しないため、カラー指定は `src/styles/global.css` の CSS カスタムプロパティ（`--surface`, `--surface-secondary`, `--border`, `--danger`）を使用する。デフォルト時は枠線（`1px solid var(--border)`）と背景（`var(--surface)`）、文字色は危険操作を示す `var(--danger)`、ホバー時に枠線も `var(--danger)` に変化させる |
 | 視認性要件 | bounding box の幅・高さがいずれも 0 でないこと、親 (`NoteCard` / `Feed`) の `overflow` 制約・flex 縮小によりクリップされないこと、`elementFromPoint()` でボタン要素が取得できること（被覆されていないこと）。AC-EDIT-07 の否定条件と一致する |
 
 ```svelte
+<script lang="ts">
+  let deleting = $state(false);
+  let confirmForce = $state(false);
+
+  async function handleDelete() {
+    if (deleting) return;
+    deleting = true;
+    try {
+      await trashNote(filename);        // 通常経路: ゴミ箱へ即時移動（確認なし）
+      onDeleted();
+    } catch (trashError) {
+      confirmForce = true;               // ゴミ箱失敗時のみ確認ダイアログを表示
+    } finally {
+      deleting = false;
+    }
+  }
+
+  async function handleForceDelete() {
+    if (deleting) return;
+    deleting = true;
+    try {
+      await forceDeleteNote(filename);
+      onDeleted();
+    } catch (error) {
+      handleCommandError(error);
+    } finally {
+      deleting = false;
+      confirmForce = false;
+    }
+  }
+</script>
+
 {#if confirmForce}
-  <div class="confirm-dialog">
+  <div class="confirm-dialog" role="alertdialog" aria-label="Confirm permanent delete">
     <span>ゴミ箱が利用できません。完全に削除しますか？</span>
-    <button class="btn-danger" on:click={handleForceDelete}>削除する</button>
-    <button on:click={() => (confirmForce = false)}>キャンセル</button>
+    <button
+      class="btn-danger"
+      onclick={handleForceDelete}
+      disabled={deleting}
+      data-testid="force-delete-confirm"
+    >削除する</button>
+    <button
+      onclick={() => (confirmForce = false)}
+      disabled={deleting}
+      data-testid="force-delete-cancel"
+    >キャンセル</button>
   </div>
 {:else}
   <button
     class="delete-btn"
-    on:click={handleDelete}
+    onclick={handleDelete}
     disabled={deleting}
     aria-label="Delete note"
     title="ノートを削除"
+    data-testid="delete-button"
   >Delete</button>
 {/if}
 
@@ -509,8 +585,8 @@ const frontmatterDecoration = () => ViewPlugin.fromClass(
     background: var(--surface);
     color: var(--danger);
   }
-  .delete-btn:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--danger); }
-  .delete-btn:disabled { opacity: 0.5; }
+  .delete-btn:hover:not(:disabled) { background: var(--surface-secondary); border-color: var(--danger); }
+  .delete-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>
 ```
 
@@ -532,13 +608,18 @@ Cmd+N（macOS）/ Ctrl+N（Linux）ショートカットの登録と処理フロ
 
 ### 4.6 自動保存の実装
 
-自動保存は `NoteCard.svelte` が以下のトリガーで発火する。
+自動保存は **二層構造** で動作する:
 
-| トリガー | 条件 | 処理 |
-|---|---|---|
-| カード外クリック | EditMode 中にカード外の領域をクリック | `getContent()` → `saveNote()` → ViewMode 遷移 |
-| 別カードクリック | EditMode 中に別の `NoteCard` をクリック | 現在のカードの `getContent()` → `saveNote()` → ViewMode 遷移 → 新カードの EditMode 遷移 |
-| Cmd+N / Ctrl+N | EditMode 中にショートカット押下 | 現在のカードの `getContent()` → `saveNote()` → ViewMode 遷移 → 新規ノート作成フロー |
+- **中間保存層 (debounce, `NoteEditor.svelte` が担当):** CodeMirror の `updateListener` で入力変化を検知し、2,000ms の debounce 後に `saveNote()` を呼ぶ。長時間の入力中でもクラッシュ耐性を持たせる目的。中間保存中は ViewMode 遷移を起こさない。
+- **確定保存層 (外部イベント, `NoteCard.svelte` / `Feed.svelte` / `Header.svelte` が担当):** 下表のイベントで debounce を待たず即時に `saveNote()` を呼び、続けて ViewMode へ遷移させる。
+
+| トリガー | 担当 | 条件 | 処理 |
+|---|---|---|---|
+| カード外クリック | `Feed.svelte` | EditMode 中にカード外の領域をクリック | `getContent()` → `saveNote()` → ViewMode 遷移 |
+| 別カードクリック | `Feed.svelte` | EditMode 中に別の `NoteCard` をクリック | 現カードの `getContent()` → `saveNote()` → ViewMode 遷移 → 新カードの EditMode 遷移 |
+| Cmd+N / Ctrl+N | `Header.svelte` | EditMode 中にショートカット押下 | 現カードの `getContent()` → `saveNote()` → ViewMode 遷移 → 新規ノート作成フロー |
+| `Escape` キー | `NoteEditor.svelte` | EditMode 中に CodeMirror 内で押下 | `getContent()` → `saveNote()` → `onExit()` コールバックで ViewMode 遷移 |
+| コンポーネント破棄 | `NoteEditor.svelte` | `onDestroy` 時に未保存差分がある | `saveNote()` を fire-and-forget で発行（セーフティネット。ウィンドウ閉じ・プロセス終了には `registerPendingSave` 経由の `beforeunload` で対応） |
 
 `saveNote()` は `tauri-commands.ts` 経由で `save_note` IPC コマンドを呼び出す。送信するのは CodeMirror 6 の `EditorView.state.doc.toString()` で取得した生の Markdown テキスト全体であり、frontmatter の組み立てや正規化はフロントエンドでは行わない。Rust 側の `storage/frontmatter.rs` が frontmatter のパースと ADR-008 準拠の再構築（`reassemble`）を担当する。
 
@@ -627,7 +708,7 @@ onDestroy(() => {
 
 | ID | 質問 | 影響コンポーネント | 決定 |
 |---|---|---|---|
-| OQ-EDIT-001 | frontmatter 背景色をユーザーがカスタマイズ可能にするか、固定値とするか | `NoteEditor.svelte` (`frontmatter-decoration.ts`) | **固定値 `rgba(59, 130, 246, 0.08)` とする。** ダークモード未対応の現仕様ではカスタマイズ機能の投資対効果が低い |
+| OQ-EDIT-001 | frontmatter 背景色をユーザーがカスタマイズ可能にするか、固定値とするか | `NoteEditor.svelte` (`frontmatter-decoration.ts`) | **CSS カスタムプロパティ `--frontmatter-bg` (src/styles/global.css) を参照する**。ライト/ダークモードそれぞれで視認性の高い背景色を定義し、OS 設定 `prefers-color-scheme` で自動切替。ユーザーによる追加カスタマイズ機能は MVP では非対応 |
 | OQ-EDIT-002 | CopyButton のコピー対象を「frontmatter 除去済み本文」とするか「frontmatter 含む生テキスト」とするか | `CopyButton.svelte`, `src/editor/frontmatter.ts` | **frontmatter 除去済み本文とする。** PromptNotes の用途（LLM プロンプトの保存・コピー）では frontmatter はメタデータであり、コピー対象に含めるとユーザー体験を損なう |
 | OQ-EDIT-003 | 編集中にブラウザ / アプリがクラッシュした場合の未保存データ復旧機構を設けるか | `NoteEditor.svelte`, `NoteCard.svelte` | **MVP ではクラッシュ復旧機構を実装しない。** 自動保存がカード外クリック時に発火するため、データ損失リスクは限定的。将来的には `localStorage` への定期的なドラフト保存を検討する |
 | OQ-EDIT-004 | DeleteButton に確認ダイアログを表示するか（OQ-ARCH-003 からの引き継ぎ） | `DeleteButton.svelte` | **OQ-ARCH-003 の決定に従う。** `trash` クレートで OS のゴミ箱に移動（確認ダイアログなし）。ゴミ箱移動失敗時（`TRASH_FAILED`）のみ確認ダイアログを表示し、ユーザーが `forceDeleteNote()` による完全削除を選択可能 |

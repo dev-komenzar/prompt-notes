@@ -1,78 +1,31 @@
 /**
  * ADR-008 compliant frontmatter handling (TypeScript side).
  *
+ * Public API (per editor_clipboard_design.md §3.1):
+ * - `extractBody(raw)` — body extraction for edit-mode copy
+ * - `generateNoteContent(tags, body)` — note content construction
+ *
+ * Internal helpers below are NOT exported because frontend is forbidden from
+ * re-parsing IPC responses (see editor_clipboard_design.md §3.3 prohibition 1).
+ *
  * Layout: `---\n<yaml>\n---\n\n<body>`
  * - Opening fence: `---\n`
- * - YAML block (no trailing newline within YAML; each field ends with \n)
+ * - YAML block
  * - Closing fence: `---\n`
  * - Separator: `\n` (single blank line between closing fence and body)
  * - Body: remaining text (does NOT include the separator \n)
- *
- * Round-trip invariant: serializeFrontmatter(splitRaw(raw)) === raw
  */
-
-export interface ParsedNote {
-  rawFrontmatter: string; // includes opening/closing fences
-  body: string;
-  tags: string[];
-}
 
 const FRONTMATTER_RE = /^---\n([\s\S]*?)\n---\n/;
 
-/**
- * Split raw .md content into frontmatter + body parts.
- */
-export function splitRaw(raw: string): { frontmatter: string; body: string } {
+function splitRaw(raw: string): { frontmatter: string; body: string } {
   const match = raw.match(FRONTMATTER_RE);
   if (!match) {
     return { frontmatter: "", body: raw };
   }
   const fmEnd = match[0].length;
-  // After closing fence there is a separator \n
-  const body = raw.substring(fmEnd + 1); // skip the \n separator
+  const body = raw.substring(fmEnd + 1);
   return { frontmatter: match[0], body };
-}
-
-/**
- * Parse tags from YAML frontmatter string.
- */
-export function parseTags(frontmatter: string): string[] {
-  const tags: string[] = [];
-  const lines = frontmatter.split("\n");
-  let inTags = false;
-
-  for (const line of lines) {
-    if (line.startsWith("tags:")) {
-      inTags = true;
-      // Check inline: tags: [a, b]
-      const inline = line.match(/tags:\s*\[([^\]]*)\]/);
-      if (inline) {
-        return inline[1]
-          .split(",")
-          .map((t) => t.trim())
-          .filter(Boolean);
-      }
-      continue;
-    }
-    if (inTags) {
-      if (line.match(/^\s+-\s+/)) {
-        const tag = line.replace(/^\s+-\s+/, "").trim();
-        if (tag) tags.push(tag);
-      } else {
-        break;
-      }
-    }
-  }
-  return tags;
-}
-
-/**
- * Parse full raw content into structured parts.
- */
-export function parseNote(raw: string): ParsedNote {
-  const { frontmatter, body } = splitRaw(raw);
-  const tags = parseTags(frontmatter);
-  return { rawFrontmatter: frontmatter, body, tags };
 }
 
 /**
@@ -95,12 +48,4 @@ export function generateNoteContent(tags: string[], body: string): string {
     ? `tags:\n${tagLines}`
     : "tags: []";
   return `---\n${yamlContent}\n---\n\n${body}`;
-}
-
-/**
- * Reassemble raw content preserving original frontmatter with updated body.
- * Maintains round-trip idempotency.
- */
-export function reassemble(rawFrontmatter: string, body: string): string {
-  return `${rawFrontmatter}\n${body}`;
 }

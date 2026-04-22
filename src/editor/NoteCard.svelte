@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { NoteMetadata } from "$lib/shell/tauri-commands";
+  import { readNote } from "$lib/shell/tauri-commands";
   import { formatDisplayDate } from "$lib/storage/timestamp";
   import NoteEditor from "./NoteEditor.svelte";
   import CopyButton from "./CopyButton.svelte";
@@ -42,11 +43,12 @@
     event.stopPropagation();
   }
 
-  function handleCopyGetContent(): string {
+  async function handleCopyGetContent(): Promise<string> {
     if (isEditing && editorApi) {
       return extractBody(editorApi.getRawContent());
     }
-    return note.body_preview;
+    const raw = await readNote(note.filename);
+    return extractBody(raw);
   }
 
   function handleDeleted() {
