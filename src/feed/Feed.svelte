@@ -1,17 +1,20 @@
 <script lang="ts">
   import { flushSync } from "svelte";
+  import { fade } from "svelte/transition";
+  import { flip } from "svelte/animate";
   import NoteCard from "$lib/editor/NoteCard.svelte";
-  import SearchBar from "./SearchBar.svelte";
-  import TagFilter from "./TagFilter.svelte";
-  import DateFilter from "./DateFilter.svelte";
+  import Toolbar from "./Toolbar.svelte";
   import { notes, loadNotes, loadMoreNotes, searchNotesAction, prependNote } from "$lib/feed/notes";
-  import { filters, setQuery, toggleTag, setDateRange, resetFilters } from "$lib/feed/filters";
+  import { filters } from "$lib/feed/filters";
   import { searchResults } from "$lib/feed/searchResults";
   import { totalCount } from "$lib/feed/totalCount";
   import { focusedIndex } from "$lib/feed/focus";
   import { handleKey as dispatchNavKey } from "$lib/feed/keyboard-nav/dispatcher";
   import { createNote } from "$lib/shell/tauri-commands";
   import { handleCommandError } from "$lib/shell/error-handler";
+
+  const FADE_MS = 180;
+  const FLIP_MS = 200;
 
   let editingFilename: string | null = $state(null);
 
@@ -20,6 +23,25 @@
   );
 
   let hasMore = $derived($notes.length < $totalCount && !$searchResults);
+
+  // フィルタ変更時は {#key} で全カードを再マウントし、FLIP アニメーションの大量発火を抑制する
+  let filterKey = $derived(
+    JSON.stringify({
+      fromDate: $filters.fromDate,
+      toDate: $filters.toDate,
+      tags: $filters.tags,
+      query: $filters.query,
+    })
+  );
+
+  $effect(() => {
+    const f = $filters;
+    if (f.query.trim() !== "") {
+      void searchNotesAction(f.query);
+    } else {
+      void loadNotes();
+    }
+  });
 
   export async function createNewNote(): Promise<void> {
     try {
@@ -65,26 +87,6 @@
       exitEditing: handleEditorExit,
     });
   }
-
-  async function handleSearch(query: string) {
-    setQuery(query);
-    await searchNotesAction(query);
-  }
-
-  async function handleTagToggle(tag: string) {
-    toggleTag(tag);
-    await loadNotes();
-  }
-
-  async function handleDateChange(from: string | null, to: string | null) {
-    setDateRange(from, to);
-    await loadNotes();
-  }
-
-  async function handleReset() {
-    resetFilters();
-    await loadNotes();
-  }
 </script>
 
 <svelte:window onkeydown={handleWindowKeydown} />
@@ -95,48 +97,45 @@
   role="presentation"
   data-testid="feed-screen"
 >
-  <div class="feed-toolbar">
-    <SearchBar onSearch={handleSearch} query={$filters.query} />
-    <div class="feed-filters">
-      <TagFilter
-        tags={allTags}
-        selectedTags={$filters.tags}
-        onToggle={handleTagToggle}
-      />
-      <DateFilter
-        fromDate={$filters.fromDate}
-        toDate={$filters.toDate}
-        onChange={handleDateChange}
-      />
-      <button class="reset-btn" onclick={handleReset}>Reset</button>
-    </div>
-  </div>
+  <Toolbar {allTags} />
 
   <div class="feed-list">
     {#if $searchResults}
-      {#each $searchResults as result (result.metadata.filename)}
-        <NoteCard
-          note={result.metadata}
-          matchedLine={result.matched_line}
-          isEditing={editingFilename === result.metadata.filename}
-          isFocused={false}
-          onClick={() => handleCardClick(result.metadata.filename)}
-        />
-      {:else}
-        <p class="feed-empty">No search results found.</p>
-      {/each}
+      {#key filterKey}
+        {#each $searchResults as result (result.metadata.filename)}
+          <div in:fade={{ duration: FADE_MS }} out:fade={{ duration: FADE_MS }}>
+            <NoteCard
+              note={result.metadata}
+              searchMatch={result}
+              isEditing={editingFilename === result.metadata.filename}
+              isFocused={false}
+              onClick={() => handleCardClick(result.metadata.filename)}
+            />
+          </div>
+        {:else}
+          <p class="feed-empty">No search results found.</p>
+        {/each}
+      {/key}
     {:else}
-      {#each $notes as note, i (note.filename)}
-        <NoteCard
-          note={note}
-          isEditing={editingFilename === note.filename}
-          isFocused={i === $focusedIndex && editingFilename === null}
-          onClick={() => handleCardClick(note.filename)}
-          onExit={handleEditorExit}
-        />
-      {:else}
-        <p class="feed-empty">No notes yet. Create one!</p>
-      {/each}
+      {#key filterKey}
+        {#each $notes as note, i (note.filename)}
+          <div
+            in:fade={{ duration: FADE_MS }}
+            out:fade={{ duration: FADE_MS }}
+            animate:flip={{ duration: FLIP_MS }}
+          >
+            <NoteCard
+              note={note}
+              isEditing={editingFilename === note.filename}
+              isFocused={i === $focusedIndex && editingFilename === null}
+              onClick={() => handleCardClick(note.filename)}
+              onExit={handleEditorExit}
+            />
+          </div>
+        {:else}
+          <p class="feed-empty">No notes yet. Create one!</p>
+        {/each}
+      {/key}
       {#if hasMore}
         <button class="load-more-btn" onclick={loadMoreNotes}>
           Load more
@@ -153,20 +152,6 @@
     height: 100%;
     overflow: hidden;
   }
-  .feed-toolbar {
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    flex-shrink: 0;
-  }
-  .feed-filters {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    flex-wrap: wrap;
-  }
   .feed-list {
     flex: 1;
     overflow-y: auto;
@@ -176,16 +161,6 @@
     text-align: center;
     color: var(--text-secondary);
     padding: 40px 0;
-  }
-  .reset-btn {
-    padding: 4px 10px;
-    border-radius: var(--radius);
-    font-size: 0.8rem;
-    color: var(--text-secondary);
-    border: 1px solid var(--border);
-  }
-  .reset-btn:hover {
-    background: var(--surface-secondary);
   }
   .load-more-btn {
     display: block;

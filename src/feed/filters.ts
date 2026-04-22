@@ -7,18 +7,26 @@ export interface FilterState {
   query: string;
 }
 
-function defaultFromDate(): string {
-  const d = new Date();
-  d.setDate(d.getDate() - 7);
+function formatDate(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${dd}`;
 }
 
+function defaultFromDate(): string {
+  const d = new Date();
+  d.setDate(d.getDate() - 7);
+  return formatDate(d);
+}
+
+function defaultToDate(): string {
+  return formatDate(new Date());
+}
+
 export const filters = writable<FilterState>({
   fromDate: defaultFromDate(),
-  toDate: null,
+  toDate: defaultToDate(),
   tags: [],
   query: "",
 });
@@ -48,7 +56,7 @@ export function setQuery(query: string): void {
 export function resetFilters(): void {
   filters.set({
     fromDate: defaultFromDate(),
-    toDate: null,
+    toDate: defaultToDate(),
     tags: [],
     query: "",
   });

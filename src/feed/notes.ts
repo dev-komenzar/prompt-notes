@@ -12,18 +12,18 @@ import { get } from "svelte/store";
 
 export const notes = writable<NoteMetadata[]>([]);
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 100;
 
 export async function loadNotes(): Promise<void> {
   try {
     const f = get(filters);
-    const result = await listNotesCmd(
-      0,
-      PAGE_SIZE,
-      f.tags.length > 0 ? f.tags : undefined,
-      f.fromDate ?? undefined,
-      f.toDate ?? undefined
-    );
+    const result = await listNotesCmd({
+      offset: 0,
+      limit: PAGE_SIZE,
+      tags: f.tags.length > 0 ? f.tags : undefined,
+      fromDate: f.fromDate,
+      toDate: f.toDate,
+    });
     notes.set(result.notes);
     totalCount.set(result.total_count);
     searchResults.set(null);
@@ -36,31 +36,14 @@ export async function loadMoreNotes(): Promise<void> {
   try {
     const f = get(filters);
     const current = get(notes);
-    const result = await listNotesCmd(
-      current.length,
-      PAGE_SIZE,
-      f.tags.length > 0 ? f.tags : undefined,
-      f.fromDate ?? undefined,
-      f.toDate ?? undefined
-    );
+    const result = await listNotesCmd({
+      offset: current.length,
+      limit: PAGE_SIZE,
+      tags: f.tags.length > 0 ? f.tags : undefined,
+      fromDate: f.fromDate,
+      toDate: f.toDate,
+    });
     notes.update((list) => [...list, ...result.notes]);
-    totalCount.set(result.total_count);
-  } catch (error) {
-    handleCommandError(error);
-  }
-}
-
-export async function loadOlderNotes(): Promise<void> {
-  try {
-    const f = get(filters);
-    const result = await listNotesCmd(
-      0,
-      500,
-      f.tags.length > 0 ? f.tags : undefined,
-      "1970-01-01",
-      "9999-12-31"
-    );
-    notes.set(result.notes);
     totalCount.set(result.total_count);
   } catch (error) {
     handleCommandError(error);
@@ -74,8 +57,16 @@ export async function searchNotesAction(query: string): Promise<void> {
     return;
   }
   try {
-    const result = await searchNotesCmd(query, 0, PAGE_SIZE);
-    searchResults.set(result.results);
+    const f = get(filters);
+    const result = await searchNotesCmd({
+      query,
+      offset: 0,
+      limit: PAGE_SIZE,
+      fromDate: f.fromDate,
+      toDate: f.toDate,
+      tags: f.tags.length > 0 ? f.tags : undefined,
+    });
+    searchResults.set(result.entries);
     totalCount.set(result.total_count);
   } catch (error) {
     handleCommandError(error);

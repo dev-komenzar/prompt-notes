@@ -7,6 +7,7 @@
   import DeleteButton from "./DeleteButton.svelte";
   import { removeNote } from "$lib/feed/notes";
   import { extractBody } from "$lib/editor/frontmatter";
+  import type { HighlightRange } from "$lib/shell/tauri-commands";
 
   interface EditorApi {
     getRawContent(): string;
@@ -14,14 +15,40 @@
 
   interface Props {
     note: NoteMetadata;
-    matchedLine?: string;
+    searchMatch?: { snippet: string; highlights: HighlightRange[] };
     isEditing: boolean;
     isFocused?: boolean;
     onClick: () => void;
     onExit?: (filename: string) => void;
   }
 
-  let { note, matchedLine, isEditing, isFocused = false, onClick, onExit }: Props = $props();
+  let { note, searchMatch, isEditing, isFocused = false, onClick, onExit }: Props = $props();
+
+  function renderHighlights(
+    snippet: string,
+    highlights: HighlightRange[],
+  ): Array<{ text: string; mark: boolean }> {
+    if (highlights.length === 0) return [{ text: snippet, mark: false }];
+    const encoder = new TextEncoder();
+    const utf8 = encoder.encode(snippet);
+    const parts: Array<{ text: string; mark: boolean }> = [];
+    let prevBytePos = 0;
+    for (const h of highlights) {
+      if (h.start > prevBytePos) {
+        parts.push({ text: decodeSlice(utf8, prevBytePos, h.start), mark: false });
+      }
+      parts.push({ text: decodeSlice(utf8, h.start, h.end), mark: true });
+      prevBytePos = h.end;
+    }
+    if (prevBytePos < utf8.length) {
+      parts.push({ text: decodeSlice(utf8, prevBytePos, utf8.length), mark: false });
+    }
+    return parts;
+  }
+
+  function decodeSlice(utf8: Uint8Array, start: number, end: number): string {
+    return new TextDecoder().decode(utf8.subarray(start, end));
+  }
 
   let editorApi: EditorApi | null = $state(null);
 
@@ -88,8 +115,12 @@
       bind:api={editorApi}
       onExit={() => onExit?.(note.filename)}
     />
-  {:else if matchedLine}
-    <p class="note-body">{matchedLine}</p>
+  {:else if searchMatch}
+    <p class="note-body">
+      {#each renderHighlights(searchMatch.snippet, searchMatch.highlights) as part}
+        {#if part.mark}<mark>{part.text}</mark>{:else}{part.text}{/if}
+      {/each}
+    </p>
   {:else}
     <p class="note-body">{note.body_preview || "(empty)"}</p>
   {/if}
@@ -106,6 +137,7 @@
     background: var(--surface);
     transition: background 0.15s;
     cursor: pointer;
+    flex-shrink: 0;
   }
   .note-card:hover:not(.editing) {
     background: var(--surface-secondary);
@@ -151,5 +183,11 @@
     white-space: pre-wrap;
     word-break: break-word;
     margin: 0;
+  }
+  .note-body :global(mark) {
+    background: var(--tag-bg);
+    color: var(--tag-text);
+    padding: 0 2px;
+    border-radius: 2px;
   }
 </style>

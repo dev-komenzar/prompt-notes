@@ -5,7 +5,6 @@
   import ErrorToast from "$lib/shell/ErrorToast.svelte";
   import { onMount } from "svelte";
   import { loadConfig } from "$lib/settings/config";
-  import { loadNotes } from "$lib/feed/notes";
   import { setupWindowCloseHandler } from "$lib/shell/window-close";
   import { setupGlobalShortcut } from "$lib/shell/global-shortcut";
 
@@ -47,7 +46,7 @@
 
   onMount(async () => {
     await loadConfig();
-    await loadNotes();
+    // Feed.svelte の $effect が filters の初期値を検知して list_notes を自動発行する
     setupWindowCloseHandler();
     setupGlobalShortcut(handleNewNote);
   });

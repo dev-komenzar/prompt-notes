@@ -4,34 +4,14 @@ use crate::storage::frontmatter;
 use crate::storage::search;
 use serde::{Deserialize, Serialize};
 use tauri::State;
+use std::path::Path;
 use std::sync::Mutex;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NoteMetadata {
-    pub filename: String,
-    pub title: String,
-    pub tags: Vec<String>,
-    pub created_at: String,
-    pub updated_at: String,
-    pub body_preview: String,
-}
+pub use search::{HighlightRange, NoteMetadata, SearchNotesResult, SearchResultEntry};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ListNotesResult {
     pub notes: Vec<NoteMetadata>,
-    pub total_count: usize,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct SearchResultEntry {
-    pub metadata: NoteMetadata,
-    pub matched_line: String,
-    pub line_number: usize,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct SearchNotesResult {
-    pub results: Vec<SearchResultEntry>,
     pub total_count: usize,
 }
 
@@ -146,21 +126,16 @@ pub fn list_notes(
 #[tauri::command]
 pub fn search_notes(
     query: String,
-    offset: usize,
-    limit: usize,
+    offset: Option<u32>,
+    limit: Option<u32>,
+    from_date: Option<String>,
+    to_date: Option<String>,
+    tags: Option<Vec<String>>,
     config: State<'_, Mutex<AppConfig>>,
 ) -> Result<SearchNotesResult, String> {
     let cfg = config.lock().map_err(|e| e.to_string())?;
-    let fm = FileManager::new(&cfg.notes_directory);
-    let results = search::full_scan(&fm, &query).map_err(|e| e.to_string())?;
-
-    let total_count = results.len();
-    let paginated: Vec<SearchResultEntry> = results.into_iter().skip(offset).take(limit).collect();
-
-    Ok(SearchNotesResult {
-        results: paginated,
-        total_count,
-    })
+    let opts = search::SearchOptions { query, from_date, to_date, tags, limit, offset };
+    search::full_scan(Path::new(&cfg.notes_directory), &opts)
 }
 
 #[tauri::command]
@@ -182,6 +157,29 @@ pub fn force_delete_note(
     let cfg = config.lock().map_err(|e| e.to_string())?;
     let fm = FileManager::new(&cfg.notes_directory);
     fm.delete(&filename).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_all_tags(
+    config: State<'_, Mutex<AppConfig>>,
+) -> Result<Vec<String>, String> {
+    let cfg = config.lock().map_err(|e| e.to_string())?;
+    let fm = FileManager::new(&cfg.notes_directory);
+    let all_files = fm.list_files().map_err(|e| e.to_string())?;
+
+    let mut tag_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for filename in &all_files {
+        let content = match fm.read(filename) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let parsed = frontmatter::parse(&content);
+        for tag in parsed.tags {
+            tag_set.insert(tag);
+        }
+    }
+
+    Ok(tag_set.into_iter().collect())
 }
 
 #[tauri::command]

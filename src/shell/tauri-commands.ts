@@ -14,14 +14,19 @@ export interface ListNotesResult {
   total_count: number;
 }
 
+export interface HighlightRange {
+  start: number;
+  end: number;
+}
+
 export interface SearchResultEntry {
   metadata: NoteMetadata;
-  matched_line: string;
-  line_number: number;
+  snippet: string;
+  highlights: HighlightRange[];
 }
 
 export interface SearchNotesResult {
-  results: SearchResultEntry[];
+  entries: SearchResultEntry[];
   total_count: number;
 }
 
@@ -44,28 +49,42 @@ export async function readNote(filename: string): Promise<string> {
   return invoke<string>("read_note", { filename });
 }
 
-export async function listNotes(
-  offset: number,
-  limit: number,
-  tags?: string[],
-  fromDate?: string,
-  toDate?: string
-): Promise<ListNotesResult> {
+export interface ListNotesParams {
+  fromDate?: string | null;
+  toDate?: string | null;
+  tags?: string[];
+  limit?: number;
+  offset?: number;
+}
+
+export async function listNotes(params: ListNotesParams): Promise<ListNotesResult> {
   return invoke<ListNotesResult>("list_notes", {
-    offset,
-    limit,
-    tags,
-    fromDate,
-    toDate,
+    offset: params.offset ?? 0,
+    limit: params.limit ?? 100,
+    tags: params.tags && params.tags.length > 0 ? params.tags : undefined,
+    fromDate: params.fromDate ?? undefined,
+    toDate: params.toDate ?? undefined,
   });
 }
 
-export async function searchNotes(
-  query: string,
-  offset: number,
-  limit: number
-): Promise<SearchNotesResult> {
-  return invoke<SearchNotesResult>("search_notes", { query, offset, limit });
+export interface SearchNotesParams {
+  query: string;
+  fromDate?: string | null;
+  toDate?: string | null;
+  tags?: string[];
+  limit?: number;
+  offset?: number;
+}
+
+export async function searchNotes(params: SearchNotesParams): Promise<SearchNotesResult> {
+  return invoke<SearchNotesResult>("search_notes", {
+    query: params.query,
+    offset: params.offset ?? 0,
+    limit: params.limit ?? 100,
+    fromDate: params.fromDate ?? undefined,
+    toDate: params.toDate ?? undefined,
+    tags: params.tags && params.tags.length > 0 ? params.tags : undefined,
+  });
 }
 
 export async function getConfig(): Promise<AppConfig> {
@@ -97,4 +116,8 @@ export async function copyToClipboard(text: string): Promise<void> {
 
 export async function readFromClipboard(): Promise<string> {
   return invoke<string>("read_from_clipboard");
+}
+
+export async function listAllTags(): Promise<string[]> {
+  return invoke<string[]>("list_all_tags");
 }

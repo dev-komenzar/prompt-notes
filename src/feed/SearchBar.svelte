@@ -10,7 +10,7 @@
 
   const debouncedSearch = debounce((q: string) => {
     onSearch(q);
-  }, 200);
+  }, 300);
 
   function handleInput(e: Event) {
     const target = e.target as HTMLInputElement;

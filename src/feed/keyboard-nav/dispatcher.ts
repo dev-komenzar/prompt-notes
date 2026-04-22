@@ -1,8 +1,7 @@
 import { get } from "svelte/store";
-import { notes, removeNote, loadOlderNotes } from "$lib/feed/notes";
+import { notes } from "$lib/feed/notes";
+import { filters } from "$lib/feed/filters";
 import { focusedIndex } from "$lib/feed/focus";
-import { trashNote, forceDeleteNote } from "$lib/shell/tauri-commands";
-import { handleCommandError } from "$lib/shell/error-handler";
 
 export type TargetContext = "editor" | "search" | "none";
 
@@ -58,11 +57,11 @@ export async function handleKey(
       } else if (idx < list.length - 1) {
         focusedIndex.set(idx + 1);
       } else {
-        const prevLen = list.length;
-        await loadOlderNotes();
-        const newLen = get(notes).length;
-        if (newLen > prevLen) {
-          focusedIndex.set(idx + 1);
+        // 最下部到達: fromDate を撤去して全期間を再フェッチ
+        // (reactive $effect が filters 変化で list_notes を再発行する)
+        const currentFilters = get(filters);
+        if (currentFilters.fromDate !== null) {
+          filters.update((f) => ({ ...f, fromDate: null }));
         }
       }
       break;
@@ -90,30 +89,16 @@ export async function handleKey(
     case "d":
     case "Delete":
       if (idx !== null && list[idx]) {
-        await deleteFocused(idx, list[idx].filename);
+        event.preventDefault();
+        triggerDeleteButton();
       }
       break;
   }
 }
 
-async function deleteFocused(oldIndex: number, filename: string): Promise<void> {
-  try {
-    await trashNote(filename);
-  } catch {
-    try {
-      await forceDeleteNote(filename);
-    } catch (err) {
-      handleCommandError(err);
-      return;
-    }
-  }
-  removeNote(filename);
-  const newLen = get(notes).length;
-  if (newLen === 0) {
-    focusedIndex.set(null);
-  } else if (oldIndex < newLen) {
-    focusedIndex.set(oldIndex);
-  } else {
-    focusedIndex.set(newLen - 1);
-  }
+function triggerDeleteButton(): void {
+  const btn = document.querySelector<HTMLButtonElement>(
+    '[data-testid="note-card"][data-focused="true"] [data-testid="delete-button"]',
+  );
+  btn?.click();
 }
