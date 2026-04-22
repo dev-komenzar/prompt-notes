@@ -48,7 +48,7 @@
     await loadConfig();
     // Feed.svelte の $effect が filters の初期値を検知して list_notes を自動発行する
     setupWindowCloseHandler();
-    setupGlobalShortcut(handleNewNote);
+    await setupGlobalShortcut(handleNewNote);
   });
 </script>
 

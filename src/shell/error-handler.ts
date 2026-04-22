@@ -1,4 +1,5 @@
 import { writable } from "svelte/store";
+import { isTauriCommandError } from "./tauri-commands";
 
 export interface AppError {
   id: number;
@@ -15,29 +16,46 @@ export function handleCommandError(error: unknown): void {
   let message = "An unexpected error occurred";
   let code: string | undefined;
 
-  if (typeof error === "string") {
-    // Parse Tauri error strings
-    if (error.includes("NotFound")) {
-      message = "Note not found. It may have been deleted.";
-      code = "NOT_FOUND";
-    } else if (error.includes("PermissionDenied")) {
-      message = "Permission denied. Check file permissions.";
-      code = "PERMISSION_DENIED";
-    } else if (error.includes("DirectoryNotFound")) {
-      message = "Notes directory not found. Check settings.";
-      code = "DIR_NOT_FOUND";
-    } else if (error.includes("InvalidFrontmatter")) {
-      message = "Note has invalid frontmatter format.";
-      code = "INVALID_FRONTMATTER";
-    } else if (error.includes("TrashNotAvailable")) {
-      message = "Trash is not available on this system.";
-      code = "TRASH_UNAVAILABLE";
-    } else if (error.includes("FilenameCollision")) {
-      message = "A note with this timestamp already exists. Try again.";
-      code = "COLLISION";
-    } else {
-      message = error;
+  if (isTauriCommandError(error)) {
+    code = error.code;
+    switch (error.code) {
+      case "STORAGE_NOT_FOUND":
+        message = "Note not found. It may have been deleted.";
+        break;
+      case "STORAGE_INVALID_FILENAME":
+        message = "Invalid filename format.";
+        break;
+      case "STORAGE_WRITE_FAILED":
+        message = "Failed to write note. Check file permissions.";
+        break;
+      case "STORAGE_READ_FAILED":
+        message = "Failed to read note file.";
+        break;
+      case "STORAGE_PATH_TRAVERSAL":
+        message = "Invalid file path detected.";
+        break;
+      case "STORAGE_FRONTMATTER_PARSE":
+        message = "Note has invalid frontmatter format.";
+        break;
+      case "CONFIG_INVALID_DIR":
+        message = "Notes directory is invalid or inaccessible.";
+        break;
+      case "CONFIG_WRITE_FAILED":
+        message = "Failed to save settings.";
+        break;
+      case "CLIPBOARD_FAILED":
+        message = "Clipboard operation failed.";
+        break;
+      case "TRASH_FAILED":
+        message = "Trash is not available on this system.";
+        break;
+      default:
+        message = error.message || "An unexpected error occurred";
     }
+    // Log full detail to console for debugging
+    console.error(`[${error.code}] ${error.message}`);
+  } else if (typeof error === "string") {
+    message = error;
   } else if (error instanceof Error) {
     message = error.message;
   }
@@ -48,10 +66,7 @@ export function handleCommandError(error: unknown): void {
     code,
     timestamp: Date.now(),
   };
-
   errors.update((list) => [...list, appError]);
-
-  // Auto-dismiss after 5 seconds
   setTimeout(() => {
     errors.update((list) => list.filter((e) => e.id !== appError.id));
   }, 5000);

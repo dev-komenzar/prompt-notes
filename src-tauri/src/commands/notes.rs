@@ -1,11 +1,13 @@
 use crate::config::AppConfig;
+use crate::error::{CommandResult, TauriCommandError};
 use crate::storage::file_manager::FileManager;
 use crate::storage::frontmatter;
 use crate::storage::search;
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use std::io;
 use std::path::Path;
 use std::sync::Mutex;
+use tauri::State;
 
 pub use search::{HighlightRange, NoteMetadata, SearchNotesResult, SearchResultEntry};
 
@@ -32,16 +34,45 @@ fn build_metadata(filename: &str, content: &str) -> NoteMetadata {
     }
 }
 
+fn map_io_write_err(e: io::Error, filename: &str) -> TauriCommandError {
+    if e.kind() == io::ErrorKind::InvalidInput {
+        TauriCommandError::storage_invalid_filename(format!(
+            "Invalid filename '{}': {}",
+            filename,
+            e
+        ))
+    } else {
+        TauriCommandError::storage_write_failed(e.to_string())
+    }
+}
+
+fn map_io_read_err(e: io::Error, filename: &str) -> TauriCommandError {
+    match e.kind() {
+        io::ErrorKind::NotFound => {
+            TauriCommandError::storage_not_found(format!("File not found: {}", filename))
+        }
+        io::ErrorKind::InvalidInput => {
+            TauriCommandError::storage_invalid_filename(format!(
+                "Invalid filename '{}': {}",
+                filename,
+                e
+            ))
+        }
+        _ => TauriCommandError::storage_read_failed(e.to_string()),
+    }
+}
+
 #[tauri::command]
 pub fn create_note(
     tags: Vec<String>,
     config: State<'_, Mutex<AppConfig>>,
-) -> Result<NoteMetadata, String> {
-    let cfg = config.lock().map_err(|e| e.to_string())?;
+) -> CommandResult<NoteMetadata> {
+    let cfg = config.lock().map_err(|_| TauriCommandError::internal("config lock poisoned"))?;
     let fm = FileManager::new(&cfg.notes_directory);
     let filename = fm.generate_filename();
     let content = frontmatter::generate(&tags, "");
-    fm.write(&filename, &content).map_err(|e| e.to_string())?;
+    fm.write(&filename, &content)
+        .map_err(|e| map_io_write_err(e, &filename))?;
     Ok(build_metadata(&filename, &content))
 }
 
@@ -50,11 +81,11 @@ pub fn save_note(
     filename: String,
     raw_content: String,
     config: State<'_, Mutex<AppConfig>>,
-) -> Result<NoteMetadata, String> {
-    let cfg = config.lock().map_err(|e| e.to_string())?;
+) -> CommandResult<NoteMetadata> {
+    let cfg = config.lock().map_err(|_| TauriCommandError::internal("config lock poisoned"))?;
     let fm = FileManager::new(&cfg.notes_directory);
     fm.write(&filename, &raw_content)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| map_io_write_err(e, &filename))?;
     Ok(build_metadata(&filename, &raw_content))
 }
 
@@ -62,10 +93,10 @@ pub fn save_note(
 pub fn read_note(
     filename: String,
     config: State<'_, Mutex<AppConfig>>,
-) -> Result<String, String> {
-    let cfg = config.lock().map_err(|e| e.to_string())?;
+) -> CommandResult<String> {
+    let cfg = config.lock().map_err(|_| TauriCommandError::internal("config lock poisoned"))?;
     let fm = FileManager::new(&cfg.notes_directory);
-    fm.read(&filename).map_err(|e| e.to_string())
+    fm.read(&filename).map_err(|e| map_io_read_err(e, &filename))
 }
 
 #[tauri::command]
@@ -76,10 +107,12 @@ pub fn list_notes(
     from_date: Option<String>,
     to_date: Option<String>,
     config: State<'_, Mutex<AppConfig>>,
-) -> Result<ListNotesResult, String> {
-    let cfg = config.lock().map_err(|e| e.to_string())?;
+) -> CommandResult<ListNotesResult> {
+    let cfg = config.lock().map_err(|_| TauriCommandError::internal("config lock poisoned"))?;
     let fm = FileManager::new(&cfg.notes_directory);
-    let all_files = fm.list_files().map_err(|e| e.to_string())?;
+    let all_files = fm
+        .list_files()
+        .map_err(|e| TauriCommandError::storage_read_failed(e.to_string()))?;
 
     let mut notes: Vec<NoteMetadata> = Vec::new();
     for filename in &all_files {
@@ -132,40 +165,44 @@ pub fn search_notes(
     to_date: Option<String>,
     tags: Option<Vec<String>>,
     config: State<'_, Mutex<AppConfig>>,
-) -> Result<SearchNotesResult, String> {
-    let cfg = config.lock().map_err(|e| e.to_string())?;
+) -> CommandResult<SearchNotesResult> {
+    let cfg = config.lock().map_err(|_| TauriCommandError::internal("config lock poisoned"))?;
     let opts = search::SearchOptions { query, from_date, to_date, tags, limit, offset };
     search::full_scan(Path::new(&cfg.notes_directory), &opts)
+        .map_err(|e| TauriCommandError::storage_read_failed(e))
 }
 
 #[tauri::command]
 pub fn trash_note(
     filename: String,
     config: State<'_, Mutex<AppConfig>>,
-) -> Result<(), String> {
-    let cfg = config.lock().map_err(|e| e.to_string())?;
+) -> CommandResult<()> {
+    let cfg = config.lock().map_err(|_| TauriCommandError::internal("config lock poisoned"))?;
     let fm = FileManager::new(&cfg.notes_directory);
     let path = fm.file_path(&filename);
-    trash::delete(&path).map_err(|e| format!("TrashNotAvailable: {}", e))
+    trash::delete(&path).map_err(|e| TauriCommandError::trash_failed(e.to_string()))
 }
 
 #[tauri::command]
 pub fn force_delete_note(
     filename: String,
     config: State<'_, Mutex<AppConfig>>,
-) -> Result<(), String> {
-    let cfg = config.lock().map_err(|e| e.to_string())?;
+) -> CommandResult<()> {
+    let cfg = config.lock().map_err(|_| TauriCommandError::internal("config lock poisoned"))?;
     let fm = FileManager::new(&cfg.notes_directory);
-    fm.delete(&filename).map_err(|e| e.to_string())
+    fm.delete(&filename)
+        .map_err(|e| TauriCommandError::storage_write_failed(e.to_string()))
 }
 
 #[tauri::command]
 pub fn list_all_tags(
     config: State<'_, Mutex<AppConfig>>,
-) -> Result<Vec<String>, String> {
-    let cfg = config.lock().map_err(|e| e.to_string())?;
+) -> CommandResult<Vec<String>> {
+    let cfg = config.lock().map_err(|_| TauriCommandError::internal("config lock poisoned"))?;
     let fm = FileManager::new(&cfg.notes_directory);
-    let all_files = fm.list_files().map_err(|e| e.to_string())?;
+    let all_files = fm
+        .list_files()
+        .map_err(|e| TauriCommandError::storage_read_failed(e.to_string()))?;
 
     let mut tag_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for filename in &all_files {
@@ -182,25 +219,3 @@ pub fn list_all_tags(
     Ok(tag_set.into_iter().collect())
 }
 
-#[tauri::command]
-pub fn move_notes(
-    from_dir: String,
-    to_dir: String,
-) -> Result<usize, String> {
-    let from_fm = FileManager::new(&from_dir);
-    let to_fm = FileManager::new(&to_dir);
-
-    to_fm.ensure_directory().map_err(|e| e.to_string())?;
-
-    let files = from_fm.list_files().map_err(|e| e.to_string())?;
-    let mut moved = 0;
-
-    for filename in &files {
-        let content = from_fm.read(filename).map_err(|e| e.to_string())?;
-        to_fm.write(filename, &content).map_err(|e| e.to_string())?;
-        from_fm.delete(filename).map_err(|e| e.to_string())?;
-        moved += 1;
-    }
-
-    Ok(moved)
-}

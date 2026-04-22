@@ -1,11 +1,11 @@
-import { register } from "@tauri-apps/plugin-global-shortcut";
+import { listen } from "@tauri-apps/api/event";
 
-export function setupGlobalShortcut(onNewNote: () => void): void {
-  register("CmdOrCtrl+N", (event) => {
-    if (event.state === "Pressed") {
+export async function setupGlobalShortcut(onNewNote: () => void): Promise<void> {
+  try {
+    await listen<void>("new-note", () => {
       onNewNote();
-    }
-  }).catch((err) => {
-    console.warn("Failed to register global shortcut:", err);
-  });
+    });
+  } catch (err) {
+    console.warn("Failed to subscribe new-note event:", err);
+  }
 }

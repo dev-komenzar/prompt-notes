@@ -3,16 +3,6 @@
   "description": "Default capability for main window",
   "windows": ["main"],
   "permissions": [
-    "core:default",
-    "fs:default",
-    "fs:allow-read",
-    "fs:allow-write",
-    "clipboard-manager:default",
-    "clipboard-manager:allow-read-text",
-    "clipboard-manager:allow-write-text",
-    "dialog:default",
-    "dialog:allow-open",
-    "global-shortcut:default",
-    "global-shortcut:allow-register"
+    "core:default"
   ]
 }

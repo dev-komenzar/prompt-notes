@@ -1,16 +1,18 @@
 pub mod commands;
 pub mod config;
+pub mod error;
 pub mod storage;
 
-use commands::clipboard::{copy_to_clipboard, read_from_clipboard};
-use commands::config::{get_config, set_config};
+use commands::clipboard::copy_to_clipboard;
+use commands::config::{get_config, pick_notes_directory, set_config};
 use commands::notes::{
-    create_note, force_delete_note, list_all_tags, list_notes, move_notes, read_note, save_note,
+    create_note, force_delete_note, list_all_tags, list_notes, read_note, save_note,
     search_notes, trash_note,
 };
 use config::AppConfig;
 use std::sync::Mutex;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -18,7 +20,17 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state() == ShortcutState::Pressed {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.emit("new-note", ());
+                        }
+                    }
+                })
+                .build(),
+        )
         .setup(|app| {
             let app_data_dir = app
                 .path()
@@ -28,6 +40,17 @@ pub fn run() {
             let cfg = AppConfig::from_app_data_dir(&app_data_dir);
             std::fs::create_dir_all(&cfg.notes_directory).ok();
             app.manage(Mutex::new(cfg));
+
+            // Register global shortcuts at startup (platform-aware CmdOrCtrl+N)
+            #[cfg(target_os = "macos")]
+            app.global_shortcut()
+                .register("Super+KeyN")
+                .expect("failed to register Super+KeyN shortcut");
+            #[cfg(not(target_os = "macos"))]
+            app.global_shortcut()
+                .register("Control+KeyN")
+                .expect("failed to register Control+KeyN shortcut");
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -38,12 +61,11 @@ pub fn run() {
             list_all_tags,
             search_notes,
             get_config,
+            pick_notes_directory,
             set_config,
-            move_notes,
             trash_note,
             force_delete_note,
             copy_to_clipboard,
-            read_from_clipboard,
         ])
         .run(tauri::generate_context!())
         .expect("error while running PromptNotes");

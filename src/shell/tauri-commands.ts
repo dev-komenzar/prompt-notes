@@ -1,5 +1,21 @@
 import { invoke } from "@tauri-apps/api/core";
 
+export interface TauriCommandError {
+  code: string;
+  message: string;
+}
+
+export function isTauriCommandError(e: unknown): e is TauriCommandError {
+  return (
+    typeof e === "object" &&
+    e !== null &&
+    "code" in e &&
+    "message" in e &&
+    typeof (e as any).code === "string" &&
+    typeof (e as any).message === "string"
+  );
+}
+
 export interface NoteMetadata {
   filename: string;
   title: string;
@@ -91,15 +107,27 @@ export async function getConfig(): Promise<AppConfig> {
   return invoke<AppConfig>("get_config");
 }
 
-export async function setConfig(config: AppConfig): Promise<void> {
-  return invoke<void>("set_config", { newConfig: config });
+export interface SetConfigParams {
+  notesDir: string;
+  moveExisting: boolean;
 }
 
-export async function moveNotes(
-  fromDir: string,
-  toDir: string
-): Promise<number> {
-  return invoke<number>("move_notes", { fromDir, toDir });
+export interface SetConfigResult {
+  moved_count: number;
+  remaining_in_old: number;
+}
+
+export async function setConfig(params: SetConfigParams): Promise<SetConfigResult> {
+  return invoke<SetConfigResult>("set_config", {
+    params: {
+      notes_dir: params.notesDir,
+      move_existing: params.moveExisting,
+    },
+  });
+}
+
+export async function pickNotesDirectory(): Promise<string | null> {
+  return invoke<string | null>("pick_notes_directory");
 }
 
 export async function trashNote(filename: string): Promise<void> {
@@ -112,10 +140,6 @@ export async function forceDeleteNote(filename: string): Promise<void> {
 
 export async function copyToClipboard(text: string): Promise<void> {
   return invoke<void>("copy_to_clipboard", { text });
-}
-
-export async function readFromClipboard(): Promise<string> {
-  return invoke<string>("read_from_clipboard");
 }
 
 export async function listAllTags(): Promise<string[]> {

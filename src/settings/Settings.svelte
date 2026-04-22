@@ -1,46 +1,62 @@
 <script lang="ts">
-  import { config, saveConfig, loadConfig } from "$lib/settings/config";
-  import { moveNotes } from "$lib/shell/tauri-commands";
+  import { config, loadConfig } from "$lib/settings/config";
+  import { pickNotesDirectory, setConfig } from "$lib/shell/tauri-commands";
   import { loadNotes } from "$lib/feed/notes";
   import { handleCommandError } from "$lib/shell/error-handler";
-  import { open } from "@tauri-apps/plugin-dialog";
 
   interface Props {
     onBack: () => void;
   }
 
   let { onBack }: Props = $props();
-  let notesDir = $state($config.notes_directory);
+  let pendingPath: string | null = $state(null);
+  let moveExisting = $state(false);
   let saving = $state(false);
+  let confirmingMove = $state(false);
+
+  let displayPath = $derived(pendingPath ?? $config.notes_directory);
 
   async function handleBrowse() {
-    const selected = await open({ directory: true, multiple: false });
-    if (selected && typeof selected === "string") {
-      notesDir = selected;
+    try {
+      const picked = await pickNotesDirectory();
+      if (picked) {
+        pendingPath = picked;
+      }
+    } catch (error) {
+      handleCommandError(error);
     }
   }
 
-  async function handleSave() {
-    if (notesDir === $config.notes_directory) {
+  function handleApplyClick() {
+    if (pendingPath === null) {
       onBack();
       return;
     }
+    if (moveExisting) {
+      confirmingMove = true;
+    } else {
+      void applyConfig();
+    }
+  }
 
+  async function applyConfig() {
+    if (pendingPath === null) return;
     saving = true;
     try {
-      const oldDir = $config.notes_directory;
-      // Move existing notes to new directory
-      if (oldDir) {
-        await moveNotes(oldDir, notesDir);
-      }
-      await saveConfig({ notes_directory: notesDir });
+      await setConfig({ notesDir: pendingPath, moveExisting });
+      await loadConfig();
       await loadNotes();
       onBack();
     } catch (error) {
       handleCommandError(error);
     } finally {
       saving = false;
+      confirmingMove = false;
     }
+  }
+
+  function cancelMoveConfirm() {
+    confirmingMove = false;
   }
 </script>
 
@@ -53,19 +69,33 @@
       <input
         id="notes-dir"
         type="text"
-        bind:value={notesDir}
+        value={displayPath}
         readonly
         data-testid="notes-dir-display"
         aria-label="Notes directory"
       />
       <button class="browse-btn" onclick={handleBrowse}>Browse</button>
     </div>
+    {#if pendingPath !== null}
+      <label class="move-existing">
+        <input type="checkbox" bind:checked={moveExisting} />
+        既存ノートを新ディレクトリへ移動する
+      </label>
+    {/if}
   </div>
+
+  {#if confirmingMove}
+    <div class="confirm-dialog" role="alertdialog">
+      <p>既存ノートを新ディレクトリへ移動します。<br/>元のディレクトリからは削除され、元に戻せません。<br/>実行しますか？</p>
+      <button onclick={cancelMoveConfirm} disabled={saving}>キャンセル</button>
+      <button class="danger" onclick={applyConfig} disabled={saving}>実行</button>
+    </div>
+  {/if}
 
   <div class="settings-actions">
     <button class="cancel-btn" onclick={onBack}>Cancel</button>
-    <button class="save-btn" onclick={handleSave} disabled={saving}>
-      {saving ? "Saving..." : "Save"}
+    <button class="save-btn" onclick={handleApplyClick} disabled={saving}>
+      {saving ? "Saving..." : "Apply"}
     </button>
   </div>
 </div>
@@ -106,6 +136,51 @@
   }
   .browse-btn:hover {
     background: var(--surface-secondary);
+  }
+  .move-existing {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    font-size: 0.85rem;
+    font-weight: normal;
+    cursor: pointer;
+  }
+  .move-existing input[type="checkbox"] {
+    width: auto;
+    margin: 0;
+  }
+  .confirm-dialog {
+    background: var(--surface-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .confirm-dialog p {
+    margin: 0;
+    font-size: 0.9rem;
+    line-height: 1.5;
+  }
+  .confirm-dialog button {
+    align-self: flex-end;
+    padding: 8px 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+  .confirm-dialog button + button {
+    margin-left: 8px;
+  }
+  .danger {
+    background: #dc2626;
+    color: white;
+    border-color: #dc2626 !important;
+  }
+  .danger:hover:not(:disabled) {
+    background: #b91c1c;
   }
   .settings-actions {
     display: flex;

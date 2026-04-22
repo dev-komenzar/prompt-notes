@@ -380,8 +380,11 @@ sequenceDiagram
 
 | ファイル / コンポーネント | 所有モジュール | 責務の単一所有 |
 |---|---|---|
-| `src-tauri/src/main.rs` | `module:shell` | Tauri アプリケーション初期化、プラグイン登録、allowlist 適用 |
-| `src-tauri/src/commands/notes.rs` | `module:storage` | ノート CRUD の IPC エントリポイント（`create_note`, `save_note`, `delete_note`, `force_delete_note`, `read_note`, `list_notes`, `search_notes`, `list_all_tags`）。既存ノートの移動は `module:settings` の `set_config` に統合されており、本モジュールは移動 IPC を公開しない |
+| `src-tauri/src/main.rs` / `src-tauri/src/lib.rs` | `module:shell` | Tauri アプリケーション初期化、プラグイン登録、capabilities 強制、**グローバルショートカット (`CmdOrCtrl+N`) の Rust 側登録と `new-note` イベント emit** |
+| `src-tauri/src/error.rs` | `module:shell` | 統一エラー型 `TauriCommandError { code, message }` と `CommandResult<T>` 型エイリアス、各エラーコードのコンストラクタ (§4.5 / OQ-ARCH-002 準拠) |
+| `src-tauri/src/commands/notes.rs` | `module:storage` | ノート CRUD の IPC エントリポイント（`create_note`, `save_note`, `trash_note`, `force_delete_note`, `read_note`, `list_notes`, `search_notes`, `list_all_tags`）。既存ノートの移動は `module:settings` の `set_config` に統合されており、本モジュールは移動 IPC を公開しない |
+| `src/shell/window-close.ts` | `module:shell` | `onCloseRequested` のフック、`registerPendingSave` / `clearPendingSave` API で `module:editor` から未保存 save 関数を受け取り、クローズ直前に best-effort 実行する |
+| `src/shell/global-shortcut.ts` | `module:shell` | Rust 側から emit される `new-note` イベントを `listen` で購読し、フロントエンドのハンドラ (`handleNewNote`) を発火させる薄いラッパー。**`@tauri-apps/plugin-global-shortcut` の直接 import は禁止** |
 | `src-tauri/src/commands/config.rs` | `module:settings` | 設定読み書きの IPC エントリポイント（`get_config`, `set_config`） |
 | `src-tauri/src/commands/clipboard.rs` | `module:shell` | クリップボード操作の IPC エントリポイント（`copy_to_clipboard`） |
 | `src-tauri/src/storage/file_manager.rs` | `module:storage` | ファイル CRUD 操作（唯一のファイルシステム書き込みポイント） |
@@ -438,8 +441,9 @@ sequenceDiagram
 | Tauri プラグイン | 使用を許可されるモジュール | 禁止事項 |
 |---|---|---|
 | `fs` | `module:storage`（Rust 側のみ） | フロントエンドからの直接使用禁止 |
-| `clipboard-manager` | `module:shell`（`commands/clipboard.rs` 経由） | フロントエンドの Web Clipboard API 使用禁止 |
-| `dialog` | `module:settings`（`SettingsModal.svelte` でのディレクトリ選択のみ） | パス文字列の取得のみ許可。パス解決・検証は Rust 側 |
+| `clipboard-manager` | `module:shell`（`commands/clipboard.rs` 経由） | フロントエンドの Web Clipboard API 使用禁止。`read_from_clipboard` IPC は提供しない (write のみ) |
+| `dialog` | `module:settings`（Rust 側 `pick_notes_directory` 経由） | **フロントエンドからの `@tauri-apps/plugin-dialog` 直接 import 禁止**。dialog 起動・canonical 化・validate は全て Rust 側 `commands/config.rs` が実施 |
+| `global-shortcut` | `module:shell`（`lib.rs` の setup 内で Rust 側登録） | **フロントエンドからの `@tauri-apps/plugin-global-shortcut` 直接 import 禁止**。Rust 側が shortcut を register し、発火時に main window へ `new-note` イベントを emit。フロントエンドは `listen` で購読 |
 
 ## 4. Implementation Implications
 
@@ -447,22 +451,27 @@ sequenceDiagram
 
 フロントエンドからの直接ファイルシステムアクセス禁止は、以下の 3 つのレイヤーで強制する。
 
-1. **`tauri.conf.json` の allowlist/capabilities**: Tauri v2 の capabilities 設定で、WebView からの `fs` プラグインへの直接アクセスを許可しない。`clipboard-manager` も `copy_to_clipboard` コマンド経由でのみ使用する。
-2. **コードレビュー規約**: フロントエンドコードが `@tauri-apps/plugin-fs` をインポートしている場合はリジェクトする。許可されるインポートは `@tauri-apps/api/core`（`invoke` のみ、`tauri-commands.ts` 内に限定）と `@tauri-apps/plugin-dialog`（`SettingsModal.svelte` 内に限定）のみ。
-3. **ESLint ルール**: `no-restricted-imports` で `@tauri-apps/plugin-fs` のインポートを禁止する。
+1. **`src-tauri/capabilities/default.json` の capabilities**: WebView に付与する capability を `core:default` のみに限定し、`fs:*` / `clipboard-manager:*` / `dialog:*` / `global-shortcut:*` の WebView 直アクセスを**完全に遮断**する。プラグイン本体 (`tauri_plugin_fs::init()` 等) は Rust 側で初期化するが、WebView からは `invoke` による Rust コマンド呼び出しのみ可能。
+2. **コードレビュー規約**: フロントエンドコードが `@tauri-apps/plugin-fs` / `@tauri-apps/plugin-clipboard-manager` / `@tauri-apps/plugin-dialog` / `@tauri-apps/plugin-global-shortcut` をインポートしている場合はリジェクトする。許可されるインポートは `@tauri-apps/api/core`（`invoke` のみ、`tauri-commands.ts` 内に限定）と `@tauri-apps/api/event`（`listen` のみ、`global-shortcut.ts` で `new-note` 購読専用）のみ。
+3. **ESLint ルール**: `eslint.config.js` の `no-restricted-imports` と `no-restricted-globals` で上記プラグイン群と `navigator.clipboard` を構造的に禁止する。`npm run lint` を CI で必須実行。
 
-```json
+```js
+// eslint.config.js (抜粋)
 {
-  "rules": {
+  rules: {
     "no-restricted-imports": ["error", {
-      "paths": [
-        {
-          "name": "@tauri-apps/plugin-fs",
-          "message": "Direct filesystem access from frontend is prohibited. Use tauri-commands.ts IPC wrappers."
-        }
-      ]
-    }]
-  }
+      paths: [
+        { name: "@tauri-apps/plugin-fs", message: "Use tauri-commands.ts IPC wrappers." },
+        { name: "@tauri-apps/plugin-clipboard-manager", message: "Use tauri-commands.ts copyToClipboard()." },
+        { name: "@tauri-apps/plugin-dialog", message: "Use tauri-commands.ts pickNotesDirectory()." },
+        { name: "@tauri-apps/plugin-global-shortcut", message: "Use 'new-note' event from Rust-side registration." },
+      ],
+    }],
+    "no-restricted-globals": ["error", {
+      name: "navigator",
+      message: "Do not access navigator.clipboard. Use tauri-commands.ts IPC wrappers.",
+    }],
+  },
 }
 ```
 
