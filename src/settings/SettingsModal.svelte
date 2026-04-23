@@ -1,26 +1,27 @@
 <script lang="ts">
-  import { config, loadConfig } from "$lib/settings/config";
+  import { config, loadConfig, setPendingPath, setMoveExisting, applyConfigResult } from "$lib/settings/config";
   import { pickNotesDirectory, setConfig } from "$lib/shell/tauri-commands";
   import { loadNotes } from "$lib/feed/notes";
   import { handleCommandError } from "$lib/shell/error-handler";
+  import { errors } from "$lib/shell/error-handler";
 
   interface Props {
     onBack: () => void;
   }
 
   let { onBack }: Props = $props();
-  let pendingPath: string | null = $state(null);
-  let moveExisting = $state(false);
   let saving = $state(false);
   let confirmingMove = $state(false);
 
-  let displayPath = $derived(pendingPath ?? $config.notes_directory);
+  let displayPath = $derived($config.pendingPath ?? $config.notes_directory);
+
+  let errorId = 0;
 
   async function handleBrowse() {
     try {
       const picked = await pickNotesDirectory();
       if (picked) {
-        pendingPath = picked;
+        setPendingPath(picked);
       }
     } catch (error) {
       handleCommandError(error);
@@ -28,11 +29,11 @@
   }
 
   function handleApplyClick() {
-    if (pendingPath === null) {
+    if ($config.pendingPath === null) {
       onBack();
       return;
     }
-    if (moveExisting) {
+    if ($config.moveExisting) {
       confirmingMove = true;
     } else {
       void applyConfig();
@@ -40,12 +41,26 @@
   }
 
   async function applyConfig() {
-    if (pendingPath === null) return;
+    if ($config.pendingPath === null) return;
     saving = true;
     try {
-      await setConfig({ notesDir: pendingPath, moveExisting });
+      const result = await setConfig({
+        notesDir: $config.pendingPath,
+        moveExisting: $config.moveExisting,
+      });
+      applyConfigResult(result, $config.pendingPath!);
       await loadConfig();
       await loadNotes();
+      if (result.remaining_in_old > 0) {
+        const id = ++errorId;
+        errors.update((list) => [
+          ...list,
+          { id, message: `古いディレクトリに ${result.remaining_in_old} 件残りました`, timestamp: Date.now() },
+        ]);
+        setTimeout(() => {
+          errors.update((list) => list.filter((e) => e.id !== id));
+        }, 5000);
+      }
       onBack();
     } catch (error) {
       handleCommandError(error);
@@ -76,9 +91,9 @@
       />
       <button class="browse-btn" onclick={handleBrowse}>Browse</button>
     </div>
-    {#if pendingPath !== null}
+    {#if $config.pendingPath !== null}
       <label class="move-existing">
-        <input type="checkbox" bind:checked={moveExisting} />
+        <input type="checkbox" checked={$config.moveExisting} onchange={() => setMoveExisting(!$config.moveExisting)} />
         既存ノートを新ディレクトリへ移動する
       </label>
     {/if}

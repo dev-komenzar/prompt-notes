@@ -1,8 +1,10 @@
 <script lang="ts">
   import Header from "$lib/feed/Header.svelte";
   import Feed from "$lib/feed/Feed.svelte";
-  import Settings from "$lib/settings/Settings.svelte";
+  import SettingsModal from "$lib/settings/SettingsModal.svelte";
+  import StartupErrorModal from "$lib/settings/StartupErrorModal.svelte";
   import ErrorToast from "$lib/shell/ErrorToast.svelte";
+  import { getStartupError } from "$lib/shell/tauri-commands";
   import { onMount } from "svelte";
   import { loadConfig } from "$lib/settings/config";
   import { setupWindowCloseHandler } from "$lib/shell/window-close";
@@ -10,6 +12,7 @@
 
   let feedRef: { createNewNote: () => Promise<void> } | undefined = $state();
   let settingsOpen = $state(false);
+  let startupError: string | null = $state(null);
 
   // Coalesce concurrent triggers of the new-note shortcut. The OS-level global
   // shortcut and the WebView keydown can both fire for a single Ctrl/Cmd+N
@@ -46,6 +49,8 @@
 
   onMount(async () => {
     await loadConfig();
+    const err = await getStartupError();
+    if (err) startupError = err;
     // Feed.svelte の $effect が filters の初期値を検知して list_notes を自動発行する
     setupWindowCloseHandler();
     await setupGlobalShortcut(handleNewNote);
@@ -64,10 +69,17 @@
   </main>
   {#if settingsOpen}
     <div class="settings-overlay" role="dialog" aria-modal="true" aria-label="Settings">
-      <Settings onBack={handleCloseSettings} />
+      <SettingsModal onBack={handleCloseSettings} />
     </div>
   {/if}
   <ErrorToast />
+  {#if startupError !== null}
+    <StartupErrorModal
+      errorMessage={startupError}
+      onUseDirect={() => { startupError = null; }}
+      onPickDir={() => { startupError = null; settingsOpen = true; }}
+    />
+  {/if}
 </div>
 
 <style>

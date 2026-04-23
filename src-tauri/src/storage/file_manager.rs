@@ -2,7 +2,7 @@ use chrono::Local;
 use regex::Regex;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub struct FileManager {
     base_dir: PathBuf,
@@ -36,6 +36,20 @@ impl FileManager {
         self.base_dir.join(filename)
     }
 
+    /// Resolve filename to an absolute path verified to be under base_dir.
+    /// Defense-in-depth against path traversal: canonicalize(base_dir) + starts_with check.
+    fn resolve_path(&self, filename: &str) -> io::Result<PathBuf> {
+        let canonical_base = self.base_dir.canonicalize()?;
+        let resolved = canonical_base.join(filename);
+        if !resolved.starts_with(&canonical_base) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!("path traversal detected: {}", filename),
+            ));
+        }
+        Ok(resolved)
+    }
+
     /// Atomic write: write to temp file then rename.
     pub fn write(&self, filename: &str, content: &str) -> io::Result<()> {
         self.ensure_directory()?;
@@ -47,7 +61,7 @@ impl FileManager {
             ));
         }
 
-        let target = self.file_path(filename);
+        let target = self.resolve_path(filename)?;
         let temp_name = format!(".{}.tmp", filename);
         let temp_path = self.base_dir.join(&temp_name);
 
@@ -64,7 +78,7 @@ impl FileManager {
                 format!("Invalid filename: {}", filename),
             ));
         }
-        let path = self.file_path(filename);
+        let path = self.resolve_path(filename)?;
         fs::read_to_string(&path)
     }
 
@@ -75,7 +89,7 @@ impl FileManager {
                 format!("Invalid filename: {}", filename),
             ));
         }
-        let path = self.file_path(filename);
+        let path = self.resolve_path(filename)?;
         fs::remove_file(&path)
     }
 

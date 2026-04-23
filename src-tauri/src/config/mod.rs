@@ -10,19 +10,24 @@ pub struct AppConfig {
 }
 
 impl AppConfig {
-    pub fn from_app_data_dir(app_data_dir: &Path) -> Self {
-        // Try load from config.json; fallback to default
+    pub fn from_app_data_dir(app_data_dir: &Path) -> Result<Self, String> {
         let config_path = app_data_dir.join("config.json");
-        if let Ok(content) = fs::read_to_string(&config_path) {
-            if let Ok(cfg) = serde_json::from_str::<AppConfig>(&content) {
-                return cfg;
+        match fs::read_to_string(&config_path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                let notes_directory = app_data_dir
+                    .join("notes")
+                    .to_string_lossy()
+                    .to_string();
+                let default_cfg = Self { notes_directory };
+                let _ = default_cfg.save(app_data_dir);
+                Ok(default_cfg)
+            }
+            Err(e) => Err(format!("CONFIG_READ_FAILED: {}", e)),
+            Ok(content) => {
+                serde_json::from_str::<AppConfig>(&content)
+                    .map_err(|e| format!("CONFIG_PARSE_FAILED: {}", e))
             }
         }
-        let notes_directory = app_data_dir
-            .join("notes")
-            .to_string_lossy()
-            .to_string();
-        Self { notes_directory }
     }
 
     pub fn save(&self, app_data_dir: &Path) -> Result<(), TauriCommandError> {

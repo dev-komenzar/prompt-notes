@@ -147,3 +147,10 @@ pub fn set_config(
 
     Ok(SetConfigResult { moved_count, remaining_in_old })
 }
+
+#[tauri::command]
+pub fn get_startup_error(
+    startup_error: State<'_, Mutex<Option<String>>>,
+) -> Option<String> {
+    startup_error.lock().ok().and_then(|g| g.clone())
+}

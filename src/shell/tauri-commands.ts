@@ -145,3 +145,7 @@ export async function copyToClipboard(text: string): Promise<void> {
 export async function listAllTags(): Promise<string[]> {
   return invoke<string[]>("list_all_tags");
 }
+
+export async function getStartupError(): Promise<string | null> {
+  return invoke<string | null>("get_startup_error");
+}

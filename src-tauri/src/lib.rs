@@ -4,7 +4,7 @@ pub mod error;
 pub mod storage;
 
 use commands::clipboard::copy_to_clipboard;
-use commands::config::{get_config, pick_notes_directory, set_config};
+use commands::config::{get_config, get_startup_error, pick_notes_directory, set_config};
 use commands::notes::{
     create_note, force_delete_note, list_all_tags, list_notes, read_note, save_note,
     search_notes, trash_note,
@@ -37,9 +37,19 @@ pub fn run() {
                 .app_data_dir()
                 .expect("failed to resolve app_data_dir from identifier com.promptnotes");
             std::fs::create_dir_all(&app_data_dir).ok();
-            let cfg = AppConfig::from_app_data_dir(&app_data_dir);
+            let (cfg, startup_error): (AppConfig, Option<String>) = match AppConfig::from_app_data_dir(&app_data_dir) {
+                Ok(c) => (c, None),
+                Err(e) => {
+                    // Fall back to default so the app can start; expose error via IPC
+                    let default_cfg = AppConfig {
+                        notes_directory: app_data_dir.join("notes").to_string_lossy().to_string(),
+                    };
+                    (default_cfg, Some(e))
+                }
+            };
             std::fs::create_dir_all(&cfg.notes_directory).ok();
             app.manage(Mutex::new(cfg));
+            app.manage(Mutex::new(startup_error));
 
             // Register global shortcuts at startup (platform-aware CmdOrCtrl+N)
             #[cfg(target_os = "macos")]
@@ -66,6 +76,7 @@ pub fn run() {
             trash_note,
             force_delete_note,
             copy_to_clipboard,
+            get_startup_error,
         ])
         .run(tauri::generate_context!())
         .expect("error while running PromptNotes");

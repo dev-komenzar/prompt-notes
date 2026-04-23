@@ -30,19 +30,20 @@ fn build_metadata(filename: &str, content: &str) -> NoteMetadata {
         tags: parsed.tags,
         created_at: created_at.clone(),
         updated_at: created_at,
-        body_preview: body.to_string(),
+        body_preview: body.chars().take(200).collect(),
     }
 }
 
 fn map_io_write_err(e: io::Error, filename: &str) -> TauriCommandError {
-    if e.kind() == io::ErrorKind::InvalidInput {
-        TauriCommandError::storage_invalid_filename(format!(
+    match e.kind() {
+        io::ErrorKind::InvalidInput => TauriCommandError::storage_invalid_filename(format!(
             "Invalid filename '{}': {}",
-            filename,
-            e
-        ))
-    } else {
-        TauriCommandError::storage_write_failed(e.to_string())
+            filename, e
+        )),
+        io::ErrorKind::PermissionDenied => {
+            TauriCommandError::new("STORAGE_PATH_TRAVERSAL", e.to_string())
+        }
+        _ => TauriCommandError::storage_write_failed(e.to_string()),
     }
 }
 
@@ -51,12 +52,12 @@ fn map_io_read_err(e: io::Error, filename: &str) -> TauriCommandError {
         io::ErrorKind::NotFound => {
             TauriCommandError::storage_not_found(format!("File not found: {}", filename))
         }
-        io::ErrorKind::InvalidInput => {
-            TauriCommandError::storage_invalid_filename(format!(
-                "Invalid filename '{}': {}",
-                filename,
-                e
-            ))
+        io::ErrorKind::InvalidInput => TauriCommandError::storage_invalid_filename(format!(
+            "Invalid filename '{}': {}",
+            filename, e
+        )),
+        io::ErrorKind::PermissionDenied => {
+            TauriCommandError::new("STORAGE_PATH_TRAVERSAL", e.to_string())
         }
         _ => TauriCommandError::storage_read_failed(e.to_string()),
     }
@@ -177,6 +178,12 @@ pub fn trash_note(
     filename: String,
     config: State<'_, Mutex<AppConfig>>,
 ) -> CommandResult<()> {
+    if !FileManager::validate_filename(&filename) {
+        return Err(TauriCommandError::storage_invalid_filename(format!(
+            "Invalid filename: {}",
+            filename
+        )));
+    }
     let cfg = config.lock().map_err(|_| TauriCommandError::internal("config lock poisoned"))?;
     let fm = FileManager::new(&cfg.notes_directory);
     let path = fm.file_path(&filename);

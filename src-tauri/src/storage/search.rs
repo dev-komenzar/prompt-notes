@@ -127,7 +127,7 @@ pub fn full_scan(notes_dir: &Path, opts: &SearchOptions) -> Result<SearchNotesRe
             None => continue,
         };
 
-        let body_preview: String = body.chars().take(100).collect();
+        let body_preview: String = body.chars().take(200).collect();
 
         entries.push(SearchResultEntry {
             metadata: NoteMetadata {
