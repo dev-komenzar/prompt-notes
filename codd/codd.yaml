@@ -5,7 +5,7 @@ project:
   language: typescript
 ai_commands:
   generate: scripts/codd-generate-wrapper.sh
-  implement: scripts/codd-implement-diff-v17.sh
+  implement: scripts/codd-implement-diff.sh
   assemble: scripts/codd-assemble-wrapper.sh
 
 coding_principles: null
