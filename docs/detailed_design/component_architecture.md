@@ -400,7 +400,7 @@ sequenceDiagram
 | `src/feed/searchResults.ts` | `module:feed` | 検索結果のスニペット・ハイライト情報（`Writable<SearchResultEntry[] | null>`）。`search_notes` レスポンス時に更新、`list_notes` フォールバック時は `null` |
 | `src/feed/totalCount.ts` | `module:feed` | フィルタ条件に合致する全ノート数（`Writable<number>`）。ページネーション（スクロールロード）の次ページ有無判定に使用 |
 | `src/settings/config.ts` | `module:settings` | 設定状態のキャッシュ |
-| `src/editor/NoteCard.svelte` | `module:editor` | ノートカードの表示/編集モード制御。**Feed 内の flex 縮小を防ぐためのレイアウト制約**（`flex-shrink: 0` 等）は `detail:feed_search` §4.4c を参照 |
+| `src/editor/NoteCard.svelte` | `module:editor` | ノートカードの表示/編集モード制御・モード切替時の高さアニメーション（§4.13）。**Feed 内の flex 縮小を防ぐためのレイアウト制約**（`flex-shrink: 0` 等）は `detail:feed_search` §4.4c を参照 |
 | `src/editor/NoteEditor.svelte` | `module:editor` | CodeMirror 6 インスタンスのライフサイクル管理 |
 | `src/editor/CopyButton.svelte` | `module:editor` | コピー操作 UI とフィードバック。**表示モード・編集モードの両方で常時マウントされ、モード遷移で再マウントしない**（詳細は `detail:editor_clipboard` §2.1 / §4.4 を参照）。**絵文字単体表示は禁止**でテキストラベル + 枠線により視認性を保証する。編集モードでのコピー時は `src/editor/frontmatter.ts` の `extractBody` を経由して body のみをクリップボードに送る |
 | `src/editor/DeleteButton.svelte` | `module:editor` | 削除操作 UI（テキストラベル `Delete` + 枠線で視認性を保証、絵文字単体表示は禁止）。詳細は `detail:editor_clipboard` §4.4b を参照 |
@@ -697,9 +697,36 @@ Rust 側 `storage/frontmatter.rs` と TypeScript 側 `src/editor/frontmatter.ts`
 - アニメーション中も操作をブロックしない。Svelte の `transition` / `animate` は要素ごとに独立して動作するため、連続削除等の操作を即座に受け付けてもクラッシュやレイアウト崩れが発生しない
 - 外部アニメーションライブラリは導入しない（Svelte 組み込み機能で完結する）
 
-**所有権:** アニメーションディレクティブの適用は `Feed.svelte`（`module:feed`）が単一所有する。`NoteCard.svelte`（`module:editor`）はアニメーションの知識を持たない。
+**所有権:** アニメーションディレクティブの適用は `Feed.svelte`（`module:feed`）が単一所有する。モード切替時の高さアニメーション（§4.13）は `NoteCard.svelte`（`module:editor`）が所有し、責務は分離される。
+
+**prefers-reduced-motion:** `@media (prefers-reduced-motion: reduce)` が有効な環境ではフェード/FLIP アニメーションを無効化し即時切替にフォールバックする（AC-UI-12）。
 
 **IPC 境界への影響:** なし。アニメーションは純粋にフロントエンド側の DOM 操作であり、Rust バックエンドへの新規コマンド追加は不要。
+
+### 4.13 モード切替時の高さアニメーション
+
+`NoteCard.svelte` は表示モード↔編集モードの切替時にカードの高さ変化をアニメーションする（AC-UI-11, AC-UI-12）。
+
+**仕様:**
+
+| 項目 | 値 |
+|---|---|
+| 対象 | モード切替時の高さ変化のみ（タイピング中のリアルタイム高さ変化は対象外） |
+| 時間・イージング | 200ms / ease-in-out |
+| コンテンツ切替 | 高さアニメーション開始と同時に即時切替 |
+| 中断時の挙動 | 実行中のアニメーションを即座に最終状態にスナップし次の操作を受け付ける |
+
+**実装方針:**
+
+- モード切替前にカード要素の現在の高さを計測し、切替後の高さを確定してから CSS `transition: height` または Web Animations API で補間する
+- CSS `transition: height` は `height: auto` に対して動作しないため、切替前後の高さを JavaScript で計測して明示的な px 値でアニメーションを駆動する
+- アニメーション完了後は `height` を `auto` に戻し、コンテンツ変化による自然な高さ変化を妨げない
+
+**prefers-reduced-motion:** `@media (prefers-reduced-motion: reduce)` が有効な環境ではアニメーションを無効化し即時切替にフォールバックする（AC-UI-12）。
+
+**所有権:** `NoteCard.svelte`（`module:editor`）が単一所有する。`Feed.svelte` はモード切替アニメーションの知識を持たない。
+
+**IPC 境界への影響:** なし。
 
 ## 5. Resolved Questions
 
