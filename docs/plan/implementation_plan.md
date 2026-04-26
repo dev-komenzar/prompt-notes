@@ -92,41 +92,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 ## 2. Milestones
 
-### タスク一覧
-
-| タスク ID | タイトル | 対象モジュール | depends_on |
-|---|---|---|---|
-| T-01 | Tauri プロジェクト初期化 + Svelte 骨格 | `module:shell` | — |
-| T-02 | `file_manager.rs` ファイル CRUD 基盤 | `module:storage` | T-01 |
-| T-03 | `frontmatter.rs` ADR-008 Rust 実装 | `module:storage` | T-01 |
-| T-04 | グローバルショートカット登録 | `module:shell` | T-01 |
-| T-05 | `tauri-commands.ts` IPC ラッパー + ESLint 設定 | `module:shell` | T-01 |
-| T-06 | `config/mod.rs` 設定基盤 | `module:settings` | T-01 |
-| T-07 | `commands/notes.rs` IPC コマンド + 型定義 | `module:storage` | T-02, T-03, T-06 |
-| T-08 | `commands/config.rs` IPC コマンド（基本） | `module:settings` | T-06 |
-| T-09 | グローバル CSS + TS ユーティリティ + テストランナー整備 | 共有 | T-01 |
-| T-10 | `NoteEditor.svelte` CodeMirror 6 エディタ | `module:editor` | T-05, T-09 |
-| T-11 | `frontmatter-decoration.ts` 背景色装飾 | `module:editor` | T-10 |
-| T-12 | `frontmatter.ts` ADR-008 TypeScript 本番実装 | `module:editor` | T-09 |
-| T-13 | `CopyButton.svelte` 1 クリックコピー | `module:editor` | T-05, T-12 |
-| T-14 | `DeleteButton.svelte` 削除 UI | `module:editor` | T-05 |
-| T-15 | `NoteCard.svelte` 表示/編集モード制御 | `module:editor` | T-10, T-11, T-13, T-14 |
-| T-16 | 新規ノート作成フロー + `Header.svelte` | `module:editor`, `module:feed` | T-04, T-05, T-07, T-15 |
-| T-17 | `Feed.svelte` フィード表示 + ストア群 | `module:feed` | T-15, T-16 |
-| T-18 | `search.rs` 全文検索 + `list_all_tags` | `module:feed`, `module:storage` | T-03, T-07 |
-| T-19 | `Toolbar.svelte` + フィルタ UI + 検索表示対応 | `module:feed` | T-17, T-18 |
-| T-20 | `SettingsModal.svelte` + 2 段階確定 UI | `module:settings` | T-05, T-08 |
-| T-21 | `set_config` 3 フェーズ実装 + `validate_notes_directory` | `module:settings` | T-06, T-08 |
-| T-22 | 起動時ディレクトリ不在エラー処理 | `module:settings` | T-21 |
-| T-23 | `commands/clipboard.rs` 本実装 | `module:shell` | T-01 |
-| T-24 | ゴミ箱連携削除 + `force_delete_note` | `module:storage` | T-07 |
-| T-25 | ウィンドウクローズ時自動保存 + エラーハンドリング統合 | `module:shell`, `module:editor` | T-15, T-24 |
-| T-26 | ADR-008 往復冪等性テスト統合 | `module:storage`, `module:editor` | T-03, T-12 |
-| T-27 | 結合テスト・E2E テスト・クロスプラットフォームビルド | 全モジュール | T-17, T-19, T-20, T-21, T-22, T-24, T-25, T-26 |
-
----
-
-### T-01: Tauri プロジェクト初期化 + Svelte 骨格
+#### M1.1 T-01 Tauri プロジェクト初期化 + Svelte 骨格
 
 **depends_on:** なし
 
@@ -150,7 +116,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 ---
 
-### T-02: `file_manager.rs` ファイル CRUD 基盤
+#### M1.2 T-02 `file_manager.rs` ファイル CRUD 基盤
 
 **depends_on:** T-01
 
@@ -170,7 +136,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 ---
 
-### T-03: `frontmatter.rs` ADR-008 Rust 実装
+#### M1.3 T-03 `frontmatter.rs` ADR-008 Rust 実装
 
 **depends_on:** T-01
 
@@ -190,7 +156,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 ---
 
-### T-04: グローバルショートカット登録
+#### M1.4 T-04 グローバルショートカット登録
 
 **depends_on:** T-01
 
@@ -204,7 +170,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 ---
 
-### T-05: `tauri-commands.ts` IPC ラッパー + ESLint 設定
+#### M1.5 T-05 `tauri-commands.ts` IPC ラッパー + ESLint 設定
 
 **depends_on:** T-01
 
@@ -226,7 +192,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 ---
 
-### T-06: `config/mod.rs` 設定基盤
+#### M1.6 T-06 `config/mod.rs` 設定基盤
 
 **depends_on:** T-01
 
@@ -246,7 +212,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 ---
 
-### T-07: `commands/notes.rs` IPC コマンド + 型定義
+#### M2.1 T-07 `commands/notes.rs` IPC コマンド + 型定義
 
 **depends_on:** T-02, T-03, T-06
 
@@ -268,7 +234,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 ---
 
-### T-08: `commands/config.rs` IPC コマンド（基本）
+#### M2.2 T-08 `commands/config.rs` IPC コマンド（基本）
 
 **depends_on:** T-06
 
@@ -282,7 +248,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 ---
 
-### T-09: グローバル CSS + TS ユーティリティ + テストランナー整備
+#### M2.3 T-09 グローバル CSS + TS ユーティリティ + テストランナー整備
 
 **depends_on:** T-01
 
@@ -307,7 +273,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 ---
 
-### T-10: `NoteEditor.svelte` CodeMirror 6 エディタ
+#### M3.1 T-10 `NoteEditor.svelte` CodeMirror 6 エディタ
 
 **depends_on:** T-05, T-09
 
@@ -327,7 +293,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 ---
 
-### T-11: `frontmatter-decoration.ts` 背景色装飾
+#### M3.2 T-11 `frontmatter-decoration.ts` 背景色装飾
 
 **depends_on:** T-10
 
@@ -347,7 +313,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 ---
 
-### T-12: `frontmatter.ts` ADR-008 TypeScript 本番実装
+#### M3.3 T-12 `frontmatter.ts` ADR-008 TypeScript 本番実装
 
 **depends_on:** T-09
 
@@ -367,7 +333,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 ---
 
-### T-13: `CopyButton.svelte` 1 クリックコピー
+#### M3.4 T-13 `CopyButton.svelte` 1 クリックコピー
 
 **depends_on:** T-05, T-12
 
@@ -387,7 +353,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 ---
 
-### T-14: `DeleteButton.svelte` 削除 UI
+#### M3.5 T-14 `DeleteButton.svelte` 削除 UI
 
 **depends_on:** T-05
 
@@ -407,7 +373,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 ---
 
-### T-15: `NoteCard.svelte` 表示/編集モード制御
+#### M4.1 T-15 `NoteCard.svelte` 表示/編集モード制御
 
 **depends_on:** T-10, T-11, T-13, T-14
 
@@ -427,7 +393,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 ---
 
-### T-16: 新規ノート作成フロー + `Header.svelte`
+#### M4.2 T-16 新規ノート作成フロー + `Header.svelte`
 
 **depends_on:** T-04, T-05, T-07, T-15
 
@@ -452,7 +418,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 ---
 
-### T-17: `Feed.svelte` フィード表示 + ストア群
+#### M4.3 T-17 `Feed.svelte` フィード表示 + ストア群
 
 **depends_on:** T-15, T-16
 
@@ -478,7 +444,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 ---
 
-### T-18: `search.rs` 全文検索 + `list_all_tags`
+#### M4.4 T-18 `search.rs` 全文検索 + `list_all_tags`
 
 **depends_on:** T-03, T-07
 
@@ -502,7 +468,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 ---
 
-### T-19: `Toolbar.svelte` + フィルタ UI + 検索表示対応
+#### M4.5 T-19 `Toolbar.svelte` + フィルタ UI + 検索表示対応
 
 **depends_on:** T-17, T-18
 
@@ -531,7 +497,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 ---
 
-### T-20: `SettingsModal.svelte` + 2 段階確定 UI
+#### M5.1 T-20 `SettingsModal.svelte` + 2 段階確定 UI
 
 **depends_on:** T-05, T-08
 
@@ -554,7 +520,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 ---
 
-### T-21: `set_config` 3 フェーズ実装 + `validate_notes_directory`
+#### M5.2 T-21 `set_config` 3 フェーズ実装 + `validate_notes_directory`
 
 **depends_on:** T-06, T-08
 
@@ -581,7 +547,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 ---
 
-### T-22: 起動時ディレクトリ不在エラー処理
+#### M5.3 T-22 起動時ディレクトリ不在エラー処理
 
 **depends_on:** T-21
 
@@ -603,7 +569,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 ---
 
-### T-23: `commands/clipboard.rs` 本実装
+#### M6.1 T-23 `commands/clipboard.rs` 本実装
 
 **depends_on:** T-01
 
@@ -623,7 +589,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 ---
 
-### T-24: ゴミ箱連携削除 + `force_delete_note`
+#### M6.2 T-24 ゴミ箱連携削除 + `force_delete_note`
 
 **depends_on:** T-07
 
@@ -647,7 +613,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 ---
 
-### T-25: ウィンドウクローズ時自動保存 + エラーハンドリング統合
+#### M6.3 T-25 ウィンドウクローズ時自動保存 + エラーハンドリング統合
 
 **depends_on:** T-15, T-24
 
@@ -670,7 +636,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 ---
 
-### T-26: ADR-008 往復冪等性テスト統合
+#### M7.1 T-26 ADR-008 往復冪等性テスト統合
 
 **depends_on:** T-03, T-12
 
@@ -691,7 +657,7 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 ---
 
-### T-27: 結合テスト・E2E テスト・クロスプラットフォームビルド
+#### M7.2 T-27 結合テスト・E2E テスト・クロスプラットフォームビルド
 
 **depends_on:** T-17, T-19, T-20, T-21, T-22, T-24, T-25, T-26
 
