@@ -13,23 +13,21 @@ export async function waitForAppReady(): Promise<void> {
   );
 }
 
-/** Navigate to a view by clicking the corresponding nav element. */
-export async function navigateToView(view: 'grid' | 'editor' | 'settings'): Promise<void> {
-  const selectors: Record<string, string> = {
-    grid: '[data-testid="nav-grid"], [aria-label="Grid view"]',
-    editor: '[data-testid="nav-editor"], [aria-label="Editor"]',
-    settings: '[data-testid="nav-settings"], [aria-label="Settings"]',
-  };
-  const readyMarkers: Record<string, string> = {
-    grid: '.feed-container, [data-testid="feed-screen"]',
-    editor: '.cm-editor',
-    settings: '[data-testid="settings-screen"]',
-  };
-  const el = await browser.$(selectors[view]);
-  await el.click();
+/**
+ * Open the settings modal by clicking the gear button in the header.
+ *
+ * The settings UI is a modal dialog (AC-UI-01) — it is not a separate view.
+ * INV-CONTAIN-01 forbids `App.svelte` from owning view-switching state, and
+ * FBD-01 explicitly bans a `currentView` enum, so the test surface only has
+ * the single feed plus a toggleable settings modal.
+ */
+export async function openSettings(): Promise<void> {
+  const btn = await browser.$('[data-testid="settings-button"]');
+  await btn.click();
   await browser.waitUntil(
-    async () => (await browser.$(readyMarkers[view])).isExisting(),
-    { timeout: 5_000, timeoutMsg: `View "${view}" did not mount within 5s` },
+    async () =>
+      (await browser.$('[data-testid="settings-modal"]')).isExisting(),
+    { timeout: 5_000, timeoutMsg: 'Settings modal did not mount within 5s' },
   );
 }
 
@@ -59,14 +57,14 @@ export async function typeInEditor(text: string): Promise<void> {
   }
 }
 
-/** Get the count of note cards in the grid view. */
-export async function getGridCardCount(): Promise<number> {
+/** Get the count of note cards rendered in the feed. */
+export async function getFeedCardCount(): Promise<number> {
   const cards = await browser.$$('[data-testid="note-card"]');
   return cards.length;
 }
 
-/** Click a specific note card by index. */
-export async function clickGridCard(index: number): Promise<void> {
+/** Click a specific note card in the feed by index. */
+export async function clickFeedCard(index: number): Promise<void> {
   const cards = await browser.$$('[data-testid="note-card"]');
   await cards[index].click();
 }

@@ -66,7 +66,7 @@
 <Toolbar />
 
 <div class="feed" data-testid="feed" on:scroll={handleScroll}>
-  <div class="grid">
+  <div class="feed-column">
     {#each displayItems as item, i (item.note.filename)}
       <NoteCard
         note={item.note}
@@ -91,14 +91,15 @@
   .feed {
     flex: 1;
     overflow-y: auto;
-    padding: var(--grid-gap);
+    padding: var(--feed-gap);
   }
 
-  .grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(var(--grid-min-col), 1fr));
-    gap: var(--grid-gap);
-    align-items: start;
+  .feed-column {
+    display: flex;
+    flex-direction: column;
+    gap: var(--feed-gap);
+    max-width: var(--feed-max-width);
+    margin: 0 auto;
   }
 
   .empty-state {

@@ -41,7 +41,7 @@ tests/
 ├── e2e/                  # 受入基準ごとの spec
 │   ├── editor.spec.ts          # module:editor
 │   ├── feed.spec.ts            # (将来) module:feed
-│   ├── grid.spec.ts            # レイアウト / グリッド
+│   ├── feed-layout.spec.ts     # フィードレイアウト
 │   ├── keyboard-shortcut.spec.ts # FC-EDIT-01 ショートカット分離検証
 │   ├── navigation.spec.ts      # 画面遷移
 │   ├── platform.spec.ts        # OS 差分 (Cmd/Ctrl)
@@ -104,7 +104,7 @@ it('AC-ED-01: editor engine is CodeMirror 6', async () => { ... });
 | `navigation.spec.ts` | AC-NAV-* |
 | `settings.spec.ts` | AC-SET-*, AC-STOR-05, AC-STOR-05a, AC-STOR-05b, AC-STOR-05c (2 段階確定・移動オプション・衝突検出・起動時不在の 4 エラー分類) |
 | `platform.spec.ts` | AC-PLAT-* (Cmd/Ctrl 差分) |
-| `grid.spec.ts` | AC-FEED-* のうちレイアウト検証 |
+| `feed-layout.spec.ts` | AC-FEED-* のうちレイアウト検証 |
 | `scope-exclusion.spec.ts` | FC-SCOPE-* (非スコープ機能の未実装確認) |
 
 ## 6. テストデータ方針

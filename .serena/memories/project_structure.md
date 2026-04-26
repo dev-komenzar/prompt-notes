@@ -14,7 +14,7 @@
 ## `src/` (フロントエンド)
 - `src/main.ts`, `src/App.svelte`, `src/app.html`, `src/app.css`
 - `src/routes/` — SvelteKit ルート
-  - `+layout.svelte`, `+layout.ts`, `+page.svelte` (一覧/グリッド)
+  - `+layout.svelte`, `+layout.ts`, `+page.svelte` (フィード一覧)
   - `new/+page.svelte`, `edit/[filename]/+page.svelte`, `settings/+page.svelte`
 - `src/components/` — 共有Svelteコンポーネント
 - `src/lib/`
@@ -38,5 +38,5 @@
 
 ## `docs/` (CoDD 生成)
 - `requirements/`, `governance/` (ADR), `design/` (system),
-  `detailed_design/` (component / editor_clipboard / storage / grid_search),
+  `detailed_design/` (component / editor_clipboard / storage / feed_search),
   `test/` (acceptance_criteria), `plan/` (implementation_plan)

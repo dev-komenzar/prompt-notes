@@ -51,7 +51,7 @@ export default defineConfig({
 ### 対象ファイル
 
 - `tests/e2e/editor.spec.ts`
-- `tests/e2e/grid.spec.ts`
+- `tests/e2e/feed-layout.spec.ts`
 - `tests/e2e/navigation.spec.ts`
 - `tests/e2e/platform.spec.ts`
 - `tests/e2e/scope-exclusion.spec.ts`

@@ -553,7 +553,7 @@ sequenceDiagram
 | FBD-03 | NoteCard が `body_preview` や省略テキストのみを表示し、本文全文を表示しない（`white-space: nowrap` / `text-overflow: ellipsis` / `-webkit-line-clamp` 等による切り詰め）。requirements §ノート「本文全文を常に表示する。カード内スクロールは設けず、カードの高さを本文量に応じて伸ばす」に違反 | requirements §ノート |
 | FBD-04 | 編集モード遷移時に NoteCard 構造（CopyButton・DeleteButton・タグ行）をアンマウントまたは再マウントする | INV-CONTAIN-05, AC-EDIT-06b |
 | FBD-05 | `NoteEditor.svelte` に `onBack: () => void` のようなコールバックを持たせて、Feed への「戻る」ナビゲーションを前提とした API にする。`onBack` の存在はインラインエディタであれば不要であり、フルスクリーンエディタ前提の設計の化石である | INV-CONTAIN-02 |
-| FBD-06 | Masonry / CSS columns / CSS grid の 2〜N 列レイアウトでフィードを構成する。requirements §フィード表示「新しいノートが上に来る降順表示」「縦に並ぶフィード形式」に違反 | requirements §トップフィード画面 |
+| FBD-06 | Masonry / Pinterest 風カード / CSS columns / 多次元レイアウト（`auto-fill` / `repeat()` / 多列）等で 2 列以上の多列レイアウトを構成する。フィードは必ず単一列・縦積みとし、`display: flex; flex-direction: column` で実装すること。requirements §フィード表示「新しいノートが上に来る降順表示」「縦に並ぶフィード形式」を厳守する | requirements §トップフィード画面 |
 
 ### 4.4 Store 設計とデータフロー
 
