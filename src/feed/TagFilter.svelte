@@ -1,21 +1,22 @@
 <script lang="ts">
+  import { toggleTag } from "./filters";
+
   interface Props {
     tags: string[];
     selectedTags: string[];
-    onToggle: (tag: string) => void;
   }
 
-  let { tags, selectedTags, onToggle }: Props = $props();
+  let { tags, selectedTags }: Props = $props();
 </script>
 
 {#if tags.length > 0}
   <div class="tag-filter" data-testid="tag-filter">
-    {#each tags as tag}
+    {#each tags as tag (tag)}
       <button
         class="tag-chip"
-        class:selected={selectedTags.includes(tag)}
-        onclick={() => onToggle(tag)}
-        aria-pressed={selectedTags.includes(tag)}
+        class:active={selectedTags.includes(tag)}
+        data-testid="tag-chip"
+        on:click={() => toggleTag(tag)}
       >
         {tag}
       </button>
@@ -29,21 +30,24 @@
     gap: 4px;
     flex-wrap: wrap;
   }
+
   .tag-chip {
-    padding: 3px 8px;
-    border-radius: 12px;
-    font-size: 0.75rem;
+    font-size: 12px;
+    padding: 2px 8px;
     border: 1px solid var(--border);
-    background: var(--surface);
+    border-radius: 12px;
     color: var(--text-secondary);
-    transition: all 0.15s;
+    transition: all var(--transition-fast);
   }
+
   .tag-chip:hover {
-    background: var(--surface-secondary);
+    border-color: var(--accent);
+    color: var(--accent);
   }
-  .tag-chip.selected {
-    background: var(--tag-bg);
-    color: var(--tag-text);
-    border-color: var(--tag-text);
+
+  .tag-chip.active {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
   }
 </style>

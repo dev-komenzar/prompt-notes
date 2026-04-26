@@ -1,224 +1,252 @@
 <script lang="ts">
-  import { config, loadConfig, setPendingPath, setMoveExisting, applyConfigResult } from "$lib/settings/config";
-  import { pickNotesDirectory, setConfig } from "$lib/shell/tauri-commands";
-  import { loadNotes } from "$lib/feed/notes";
-  import { handleCommandError } from "$lib/shell/error-handler";
-  import { errors } from "$lib/shell/error-handler";
+  import {
+    config,
+    loadConfig,
+    setPendingPath,
+    setMoveExisting,
+    applyConfigResult,
+  } from "./config";
+  import {
+    pickNotesDirectory,
+    setConfig,
+  } from "../shell/tauri-commands";
+  import { handleCommandError } from "../shell/error-handler";
+  import { loadNotes } from "../feed/notes";
 
   interface Props {
-    onBack: () => void;
+    onClose: () => void;
   }
 
-  let { onBack }: Props = $props();
+  let { onClose }: Props = $props();
   let saving = $state(false);
-  let confirmingMove = $state(false);
+  let error = $state<string | null>(null);
 
-  let displayPath = $derived($config.pendingPath ?? $config.notes_directory);
-
-  let errorId = 0;
-
-  async function handleBrowse() {
+  async function handlePickDir() {
     try {
-      const picked = await pickNotesDirectory();
-      if (picked) {
-        setPendingPath(picked);
+      const dir = await pickNotesDirectory();
+      if (dir) {
+        setPendingPath(dir);
       }
-    } catch (error) {
-      handleCommandError(error);
+    } catch (err) {
+      handleCommandError(err);
     }
   }
 
-  function handleApplyClick() {
-    if ($config.pendingPath === null) {
-      onBack();
-      return;
-    }
-    if ($config.moveExisting) {
-      confirmingMove = true;
-    } else {
-      void applyConfig();
-    }
-  }
+  async function handleSave() {
+    const pending = $config.pendingPath;
+    if (!pending) return;
 
-  async function applyConfig() {
-    if ($config.pendingPath === null) return;
     saving = true;
+    error = null;
+
     try {
       const result = await setConfig({
-        notesDir: $config.pendingPath,
+        notesDir: pending,
         moveExisting: $config.moveExisting,
       });
-      applyConfigResult(result, $config.pendingPath!);
-      await loadConfig();
+      applyConfigResult(result, pending);
       await loadNotes();
-      if (result.remaining_in_old > 0) {
-        const id = ++errorId;
-        errors.update((list) => [
-          ...list,
-          { id, message: `古いディレクトリに ${result.remaining_in_old} 件残りました`, timestamp: Date.now() },
-        ]);
-        setTimeout(() => {
-          errors.update((list) => list.filter((e) => e.id !== id));
-        }, 5000);
-      }
-      onBack();
-    } catch (error) {
-      handleCommandError(error);
+      onClose();
+    } catch (err) {
+      handleCommandError(err);
+      error = "Failed to update settings.";
     } finally {
       saving = false;
-      confirmingMove = false;
     }
   }
 
-  function cancelMoveConfirm() {
-    confirmingMove = false;
+  function handleKeydown(event: KeyboardEvent) {
+    if (event.key === "Escape") {
+      onClose();
+    }
   }
 </script>
 
-<div class="settings" data-testid="settings-screen">
-  <h2>Settings</h2>
+<svelte:window on:keydown={handleKeydown} />
 
-  <div class="setting-group">
-    <label for="notes-dir">Notes Directory</label>
-    <div class="dir-input">
-      <input
-        id="notes-dir"
-        type="text"
-        value={displayPath}
-        readonly
-        data-testid="notes-dir-display"
-        aria-label="Notes directory"
-      />
-      <button class="browse-btn" onclick={handleBrowse}>Browse</button>
+<!-- svelte-ignore a11y-click-events-have-key-events -->
+<div class="modal-overlay" data-testid="settings-modal" on:click|self={onClose}>
+  <div class="modal" role="dialog" aria-label="Settings">
+    <div class="modal-header">
+      <h2>Settings</h2>
+      <button class="modal-close" on:click={onClose}>✕</button>
     </div>
-    {#if $config.pendingPath !== null}
-      <label class="move-existing">
-        <input type="checkbox" checked={$config.moveExisting} onchange={() => setMoveExisting(!$config.moveExisting)} />
-        既存ノートを新ディレクトリへ移動する
-      </label>
-    {/if}
-  </div>
 
-  {#if confirmingMove}
-    <div class="confirm-dialog" role="alertdialog">
-      <p>既存ノートを新ディレクトリへ移動します。<br/>元のディレクトリからは削除され、元に戻せません。<br/>実行しますか？</p>
-      <button onclick={cancelMoveConfirm} disabled={saving}>キャンセル</button>
-      <button class="danger" onclick={applyConfig} disabled={saving}>実行</button>
+    <div class="modal-body">
+      <label class="field-label">Notes Directory</label>
+      <div class="dir-row">
+        <input
+          type="text"
+          class="dir-input"
+          data-testid="notes-dir-display"
+          value={$config.pendingPath ?? $config.notes_directory}
+          readonly
+        />
+        <button
+          class="btn btn-secondary"
+          data-testid="pick-dir-button"
+          on:click={handlePickDir}
+        >
+          Browse…
+        </button>
+      </div>
+
+      {#if $config.pendingPath}
+        <label class="checkbox-label">
+          <input
+            type="checkbox"
+            checked={$config.moveExisting}
+            on:change={(e) => setMoveExisting(e.currentTarget.checked)}
+          />
+          Move existing notes to new directory
+        </label>
+      {/if}
+
+      {#if $config.lastResult}
+        <p class="result-info">
+          Moved {$config.lastResult.moved_count} note(s).
+          {#if $config.lastResult.remaining_in_old > 0}
+            {$config.lastResult.remaining_in_old} remaining in old directory.
+          {/if}
+        </p>
+      {/if}
+
+      {#if error}
+        <p class="error-text">{error}</p>
+      {/if}
     </div>
-  {/if}
 
-  <div class="settings-actions">
-    <button class="cancel-btn" onclick={onBack}>Cancel</button>
-    <button class="save-btn" onclick={handleApplyClick} disabled={saving}>
-      {saving ? "Saving..." : "Apply"}
-    </button>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" on:click={onClose}>Cancel</button>
+      <button
+        class="btn btn-primary"
+        data-testid="save-settings-button"
+        disabled={!$config.pendingPath || saving}
+        on:click={handleSave}
+      >
+        {saving ? "Saving…" : "Save"}
+      </button>
+    </div>
   </div>
 </div>
 
 <style>
-  .settings {
-    padding: 24px;
-    max-width: 600px;
-    margin: 0 auto;
-  }
-  h2 {
-    margin-bottom: 24px;
-  }
-  .setting-group {
-    margin-bottom: 20px;
-  }
-  label {
-    display: block;
-    font-size: 0.9rem;
-    font-weight: 500;
-    margin-bottom: 6px;
-  }
-  .dir-input {
-    display: flex;
-    gap: 8px;
-  }
-  .dir-input input {
-    flex: 1;
-    padding: 8px 12px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--surface-secondary);
-  }
-  .browse-btn {
-    padding: 8px 16px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-  }
-  .browse-btn:hover {
-    background: var(--surface-secondary);
-  }
-  .move-existing {
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
     display: flex;
     align-items: center;
-    gap: 6px;
-    margin-top: 8px;
-    font-size: 0.85rem;
-    font-weight: normal;
-    cursor: pointer;
+    justify-content: center;
+    z-index: 100;
   }
-  .move-existing input[type="checkbox"] {
-    width: auto;
-    margin: 0;
-  }
-  .confirm-dialog {
-    background: var(--surface-secondary);
-    border: 1px solid var(--border);
+
+  .modal {
+    background: var(--surface);
     border-radius: var(--radius);
-    padding: 16px;
-    margin-bottom: 16px;
+    width: 480px;
+    max-width: 90vw;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  }
+
+  .modal-header {
     display: flex;
-    flex-direction: column;
-    gap: 12px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
   }
-  .confirm-dialog p {
-    margin: 0;
-    font-size: 0.9rem;
-    line-height: 1.5;
+
+  .modal-header h2 {
+    font-size: 16px;
+    font-weight: 600;
   }
-  .confirm-dialog button {
-    align-self: flex-end;
-    padding: 8px 16px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
+
+  .modal-close {
+    font-size: 16px;
+    color: var(--text-secondary);
+    padding: 4px;
   }
-  .confirm-dialog button + button {
-    margin-left: 8px;
+
+  .modal-body {
+    padding: 20px;
   }
-  .danger {
-    background: #dc2626;
-    color: white;
-    border-color: #dc2626 !important;
+
+  .field-label {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    margin-bottom: 6px;
+    color: var(--text-secondary);
   }
-  .danger:hover:not(:disabled) {
-    background: #b91c1c;
-  }
-  .settings-actions {
+
+  .dir-row {
     display: flex;
     gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .dir-input {
+    flex: 1;
+    font-size: 13px;
+    background: var(--surface-hover);
+    cursor: default;
+  }
+
+  .checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    margin-bottom: 12px;
+  }
+
+  .result-info {
+    font-size: 12px;
+    color: var(--success);
+    margin-bottom: 8px;
+  }
+
+  .error-text {
+    font-size: 12px;
+    color: var(--danger);
+    margin-bottom: 8px;
+  }
+
+  .modal-footer {
+    display: flex;
     justify-content: flex-end;
-    margin-top: 32px;
+    gap: 8px;
+    padding: 12px 20px;
+    border-top: 1px solid var(--border);
   }
-  .cancel-btn {
-    padding: 8px 16px;
-    border: 1px solid var(--border);
+
+  .btn {
+    padding: 6px 14px;
     border-radius: var(--radius);
+    font-size: 13px;
+    transition: background var(--transition-fast);
   }
-  .save-btn {
-    padding: 8px 16px;
+
+  .btn-primary {
     background: var(--accent);
-    color: white;
-    border-radius: var(--radius);
+    color: #fff;
   }
-  .save-btn:hover {
+
+  .btn-primary:hover:not(:disabled) {
     background: var(--accent-hover);
   }
-  .save-btn:disabled {
-    opacity: 0.6;
+
+  .btn-primary:disabled {
+    opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  .btn-secondary {
+    border: 1px solid var(--border);
+  }
+
+  .btn-secondary:hover {
+    background: var(--surface-hover);
   }
 </style>

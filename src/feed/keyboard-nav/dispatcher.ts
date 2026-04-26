@@ -1,7 +1,7 @@
 import { get } from "svelte/store";
-import { notes } from "$lib/feed/notes";
-import { filters } from "$lib/feed/filters";
-import { focusedIndex } from "$lib/feed/focus";
+import { focusedIndex } from "../focus";
+import { notes } from "../notes";
+import { filters } from "../filters";
 
 export type TargetContext = "editor" | "search" | "none";
 

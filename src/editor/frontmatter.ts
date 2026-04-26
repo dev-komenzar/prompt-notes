@@ -1,21 +1,19 @@
 /**
- * ADR-008 compliant frontmatter handling (TypeScript side).
+ * Frontmatter utilities — ADR-008
  *
- * Public API (per editor_clipboard_design.md §3.1):
- * - `extractBody(raw)` — body extraction for edit-mode copy
- * - `generateNoteContent(tags, body)` — note content construction
+ * Body semantics:
+ *   - The closing fence `---\n` is NOT part of the body.
+ *   - A separator `\n` after the closing fence is NOT part of the body.
+ *   - `extractBody(generateNoteContent(tags, body)) === body` must hold (round-trip idempotency).
  *
- * Internal helpers below are NOT exported because frontend is forbidden from
- * re-parsing IPC responses (see editor_clipboard_design.md §3.3 prohibition 1).
- *
- * Layout: `---\n<yaml>\n---\n\n<body>`
- * - Opening fence: `---\n`
- * - YAML block
- * - Closing fence: `---\n`
- * - Separator: `\n` (single blank line between closing fence and body)
- * - Body: remaining text (does NOT include the separator \n)
+ * The regex captures everything between opening `---\n` and closing `\n---\n`.
+ * After the closing fence we skip exactly one `\n` (the separator) before the body starts.
  */
 
+/**
+ * Matches frontmatter block: `---\n<yaml>\n---\n`
+ * Captures the entire block including fences.
+ */
 const FRONTMATTER_RE = /^---\n([\s\S]*?)\n---\n/;
 
 function splitRaw(raw: string): { frontmatter: string; body: string } {
@@ -29,15 +27,16 @@ function splitRaw(raw: string): { frontmatter: string; body: string } {
 }
 
 /**
- * Extract body from raw note content (for display/copy).
+ * Extract body from a note's raw content, stripping frontmatter + separator.
+ * ADR-008 compliant.
  */
 export function extractBody(raw: string): string {
   return splitRaw(raw).body;
 }
 
 /**
- * Generate complete note content from tags and body.
- * Produces ADR-008 compliant format.
+ * Generate full note content from tags and body.
+ * Produces `---\n<yaml>\n---\n\n<body>` (ADR-008 format).
  */
 export function generateNoteContent(tags: string[], body: string): string {
   const tagLines =

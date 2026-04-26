@@ -1,4 +1,3 @@
-import * as path from 'path';
 import {
   waitForAppReady,
   setNotesDirectoryAndReload,
@@ -55,7 +54,7 @@ describe('module:keyboard-nav — フィード画面のキーボード操作 (AC
 
     // Layer 2 — seedNavigationFixture + setNotesDirectoryAndReload + writeClipboardSentinel
     fixtureFilenames = seedNavigationFixture(tempDir);
-    await setNotesDirectoryAndReload(path.join(tempDir, 'notes'));
+    await setNotesDirectoryAndReload(tempDir);
     await waitForAppReady();
     // Give the feed list and card DOM a moment to render after the reload.
     await browser.pause(500);
@@ -592,8 +591,8 @@ describe('module:keyboard-nav — フィード画面のキーボード操作 (AC
 
     it('AC-NAV-10b: 最下部カードで ↓ + 古いノートあり → より古いノートがロードされる', async () => {
       // 古いノート (8 日前) を追加してからリロード、その後最下部にフォーカス
-      seedOldNote(tempDir, 8, 'Old navigation note beyond 7-day filter');
-      await setNotesDirectoryAndReload(path.join(tempDir, 'notes'));
+      seedOldNote(tempDir, 8, [], 'Old navigation note beyond 7-day filter');
+      await setNotesDirectoryAndReload(tempDir);
       await waitForAppReady();
       await browser.pause(500);
 

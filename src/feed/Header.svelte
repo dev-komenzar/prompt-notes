@@ -1,29 +1,58 @@
 <script lang="ts">
+  import SearchBar from "./SearchBar.svelte";
+  import { debounce } from "../shell/debounce";
+  import { setQuery } from "./filters";
+  import { searchNotesAction, loadNotes } from "./notes";
+
   interface Props {
     onNewNote: () => void;
     onOpenSettings: () => void;
   }
 
   let { onNewNote, onOpenSettings }: Props = $props();
+
+  const debouncedSearch = debounce((q: string) => {
+    setQuery(q);
+    if (q.trim()) {
+      searchNotesAction(q);
+    } else {
+      loadNotes();
+    }
+  }, 300);
+
+  function handleKeydown(event: KeyboardEvent) {
+    if ((event.metaKey || event.ctrlKey) && event.key === "n") {
+      event.preventDefault();
+      onNewNote();
+    }
+  }
 </script>
 
-<header class="header">
+<svelte:window on:keydown={handleKeydown} />
+
+<header class="header" data-testid="header">
+  <div class="header-left">
+    <h1 class="app-title">PromptNotes</h1>
+  </div>
+  <div class="header-center">
+    <SearchBar onSearch={debouncedSearch} />
+  </div>
   <div class="header-right">
     <button
-      class="header-btn primary"
-      onclick={onNewNote}
-      aria-label="Create new note"
-      data-testid="nav-editor"
+      class="btn btn-primary"
+      data-testid="new-note-button"
+      on:click={onNewNote}
+      title="New note (Cmd+N / Ctrl+N)"
     >
-      + New Note
+      + New
     </button>
     <button
-      class="header-btn"
-      onclick={onOpenSettings}
-      aria-label="Open settings"
-      data-testid="nav-settings"
+      class="btn btn-icon"
+      data-testid="settings-button"
+      on:click={onOpenSettings}
+      title="Settings"
     >
-      Settings
+      ⚙
     </button>
   </div>
 </header>
@@ -31,35 +60,58 @@
 <style>
   .header {
     display: flex;
-    justify-content: flex-end;
     align-items: center;
-    padding: 8px 16px;
+    height: var(--header-height);
+    padding: 0 16px;
     border-bottom: 1px solid var(--border);
-    background: var(--surface);
-    min-height: 48px;
+    gap: 16px;
     flex-shrink: 0;
   }
+
+  .header-left {
+    flex-shrink: 0;
+  }
+
+  .app-title {
+    font-size: 18px;
+    font-weight: 600;
+  }
+
+  .header-center {
+    flex: 1;
+    max-width: 480px;
+  }
+
   .header-right {
     display: flex;
     align-items: center;
     gap: 8px;
+    flex-shrink: 0;
   }
-  .header-btn {
-    padding: 6px 12px;
+
+  .btn {
+    padding: 6px 14px;
     border-radius: var(--radius);
-    font-size: 0.875rem;
-    transition: background 0.15s;
-    border: 1px solid var(--border);
+    font-size: 14px;
+    transition: background var(--transition-fast);
   }
-  .header-btn:hover {
-    background: var(--surface-secondary);
-  }
-  .header-btn.primary {
+
+  .btn-primary {
     background: var(--accent);
-    color: white;
-    border-color: var(--accent);
+    color: #fff;
   }
-  .header-btn.primary:hover {
+
+  .btn-primary:hover {
     background: var(--accent-hover);
+  }
+
+  .btn-icon {
+    font-size: 18px;
+    padding: 6px 8px;
+    border-radius: var(--radius);
+  }
+
+  .btn-icon:hover {
+    background: var(--surface-hover);
   }
 </style>

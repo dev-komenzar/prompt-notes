@@ -22,7 +22,7 @@ describe('module:storage — E2E Tests', () => {
   beforeEach(async () => {
     tempDir = createTempNotesDir();
     writeTestConfig(tempDir, tempDir);
-    await setNotesDirectoryAndReload(path.join(tempDir, 'notes'));
+    await setNotesDirectoryAndReload(tempDir);
   });
 
   afterEach(async () => {

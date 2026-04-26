@@ -1,36 +1,39 @@
 <script lang="ts">
+  import { setDateRange } from "./filters";
+
   interface Props {
     fromDate: string | null;
     toDate: string | null;
-    onChange: (from: string | null, to: string | null) => void;
   }
 
-  let { fromDate, toDate, onChange }: Props = $props();
+  let { fromDate, toDate }: Props = $props();
 
-  function handleFromChange(e: Event) {
-    const target = e.target as HTMLInputElement;
-    onChange(target.value || null, toDate);
+  function handleFromChange(event: Event) {
+    const val = (event.target as HTMLInputElement).value;
+    setDateRange(val || null, toDate);
   }
 
-  function handleToChange(e: Event) {
-    const target = e.target as HTMLInputElement;
-    onChange(fromDate, target.value || null);
+  function handleToChange(event: Event) {
+    const val = (event.target as HTMLInputElement).value;
+    setDateRange(fromDate, val || null);
   }
 </script>
 
 <div class="date-filter" data-testid="date-filter">
   <input
     type="date"
+    class="date-input"
+    data-testid="date-from"
     value={fromDate ?? ""}
-    oninput={handleFromChange}
-    aria-label="From date"
+    on:change={handleFromChange}
   />
   <span class="date-sep">–</span>
   <input
     type="date"
+    class="date-input"
+    data-testid="date-to"
     value={toDate ?? ""}
-    oninput={handleToChange}
-    aria-label="To date"
+    on:change={handleToChange}
   />
 </div>
 
@@ -40,15 +43,15 @@
     align-items: center;
     gap: 4px;
   }
-  input[type="date"] {
-    padding: 4px 8px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--surface);
-    font-size: 0.8rem;
+
+  .date-input {
+    font-size: 12px;
+    padding: 2px 6px;
+    max-width: 130px;
   }
+
   .date-sep {
     color: var(--text-secondary);
-    font-size: 0.8rem;
+    font-size: 12px;
   }
 </style>

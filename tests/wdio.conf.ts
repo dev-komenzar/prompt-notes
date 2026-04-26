@@ -24,7 +24,15 @@ function resolveTauriBinary(): string {
 let tauriDriver: ChildProcess;
 
 export const config: WebdriverIO.Config = {
-  specs: [path.join(__dirname, 'e2e/**/*.spec.ts')],
+  // _precheck.spec.ts runs first. If it detects the devUrl fallback (broken
+  // production build), it calls process.exit(1) to abort the entire run so
+  // no subsequent spec wastes time on cascading failures. We do NOT set
+  // `bail: 1` globally — legitimate feature-test failures should not cancel
+  // sibling specs.
+  specs: [
+    path.join(__dirname, 'e2e/_precheck.spec.ts'),
+    path.join(__dirname, 'e2e/**/!(_precheck).spec.ts'),
+  ],
   maxInstances: 1,
   capabilities: [
     {

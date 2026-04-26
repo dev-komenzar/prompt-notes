@@ -1,8 +1,7 @@
 import { describe, it, expect } from "vitest";
-import {
-  extractBody,
-  generateNoteContent,
-} from "../../src/editor/frontmatter";
+import { extractBody, generateNoteContent } from "../../src/editor/frontmatter";
+
+// Re-use production functions for round-trip tests
 
 describe("frontmatter public API", () => {
   describe("extractBody", () => {

@@ -1,178 +1,121 @@
 <script lang="ts">
-  import { flushSync } from "svelte";
-  import { fade } from "svelte/transition";
-  import { flip } from "svelte/animate";
-  import NoteCard from "$lib/editor/NoteCard.svelte";
+  import NoteCard from "./NoteCard.svelte";
   import Toolbar from "./Toolbar.svelte";
-  import { notes, loadNotes, loadMoreNotes, searchNotesAction, prependNote } from "$lib/feed/notes";
-  import { filters } from "$lib/feed/filters";
-  import { searchResults } from "$lib/feed/searchResults";
-  import { totalCount } from "$lib/feed/totalCount";
-  import { focusedIndex } from "$lib/feed/focus";
-  import { handleKey as dispatchNavKey } from "$lib/feed/keyboard-nav/dispatcher";
-  import { createNote } from "$lib/shell/tauri-commands";
-  import { handleCommandError } from "$lib/shell/error-handler";
+  import { notes, loadNotes, loadMoreNotes } from "./notes";
+  import { searchResults } from "./searchResults";
+  import { filters } from "./filters";
+  import { focusedIndex } from "./focus";
+  import { handleKey, type DispatcherHooks } from "./keyboard-nav/dispatcher";
+  import type { NoteMetadata, SearchResultEntry } from "../shell/tauri-commands";
 
-  const FADE_MS = 180;
-  const FLIP_MS = 200;
+  interface Props {
+    editingFilename: string | null;
+  }
 
-  let editingFilename: string | null = $state(null);
+  let { editingFilename = $bindable() }: Props = $props();
 
-  let allTags: string[] = $derived(
-    [...new Set($notes.flatMap((n) => n.tags))].sort()
-  );
-
-  let hasMore = $derived($notes.length < $totalCount && !$searchResults);
-
-  // フィルタ変更時は {#key} で全カードを再マウントし、FLIP アニメーションの大量発火を抑制する
-  let filterKey = $derived(
-    JSON.stringify({
-      fromDate: $filters.fromDate,
-      toDate: $filters.toDate,
-      tags: $filters.tags,
-      query: $filters.query,
-    })
-  );
-
+  // Re-fetch notes when filters change
   $effect(() => {
-    const f = $filters;
-    if (f.query.trim() !== "") {
-      void searchNotesAction(f.query);
-    } else {
-      void loadNotes();
+    // Access reactive filter values to trigger dependency tracking
+    const _f = $filters;
+    if (!$filters.query) {
+      loadNotes();
     }
   });
 
-  export async function createNewNote(): Promise<void> {
-    try {
-      const meta = await createNote([]);
-      prependNote(meta);
-      editingFilename = meta.filename;
-    } catch (error) {
-      handleCommandError(error);
+  let displayItems = $derived.by(() => {
+    const sr = $searchResults;
+    if (sr) {
+      return sr.map((entry: SearchResultEntry) => ({
+        note: entry.metadata,
+        snippet: entry.snippet,
+      }));
     }
-  }
+    return $notes.map((note: NoteMetadata) => ({
+      note,
+      snippet: undefined,
+    }));
+  });
 
-  function handleCardClick(filename: string) {
-    editingFilename = filename;
-  }
-
-  function handleOutsideClick(event: MouseEvent) {
-    const target = event.target as HTMLElement | null;
-    if (!target) return;
-    if (!target.closest('[data-testid="note-card"]')) {
+  const hooks: DispatcherHooks = {
+    getEditingFilename() {
+      return editingFilename;
+    },
+    setEditingFilename(filename: string | null) {
+      editingFilename = filename;
+    },
+    exitEditing(filename: string) {
       editingFilename = null;
-      focusedIndex.set(null);
+    },
+  };
+
+  function onKeydown(event: KeyboardEvent) {
+    handleKey(event, hooks);
+  }
+
+  function handleScroll(event: Event) {
+    const el = event.target as HTMLElement;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 200) {
+      loadMoreNotes();
     }
-  }
-
-  function handleEditorExit(filename: string) {
-    const i = $notes.findIndex((n) => n.filename === filename);
-    flushSync(() => {
-      editingFilename = null;
-      if (i >= 0) focusedIndex.set(i);
-    });
-    // Poke the DOM so tauri-driver invalidates its cached `.cm-editor`
-    // reference. Without this, `browser.$('.cm-editor').isExisting()` can
-    // return true for the detached node even after Svelte unmount.
-    document.body.setAttribute("data-nav-cycle", String(performance.now()));
-  }
-
-  function handleWindowKeydown(event: KeyboardEvent) {
-    void dispatchNavKey(event, {
-      getEditingFilename: () => editingFilename,
-      setEditingFilename: (filename) => {
-        editingFilename = filename;
-      },
-      exitEditing: handleEditorExit,
-    });
   }
 </script>
 
-<svelte:window onkeydown={handleWindowKeydown} />
+<svelte:window on:keydown={onKeydown} />
 
-<div
-  class="feed-container"
-  onclick={handleOutsideClick}
-  role="presentation"
-  data-testid="feed-screen"
->
-  <Toolbar {allTags} />
+<Toolbar />
 
-  <div class="feed-list">
-    {#if $searchResults}
-      {#key filterKey}
-        {#each $searchResults as result (result.metadata.filename)}
-          <div in:fade={{ duration: FADE_MS }} out:fade={{ duration: FADE_MS }}>
-            <NoteCard
-              note={result.metadata}
-              searchMatch={result}
-              isEditing={editingFilename === result.metadata.filename}
-              isFocused={false}
-              onClick={() => handleCardClick(result.metadata.filename)}
-            />
-          </div>
-        {:else}
-          <p class="feed-empty">No search results found.</p>
-        {/each}
-      {/key}
-    {:else}
-      {#key filterKey}
-        {#each $notes as note, i (note.filename)}
-          <div
-            in:fade={{ duration: FADE_MS }}
-            out:fade={{ duration: FADE_MS }}
-            animate:flip={{ duration: FLIP_MS }}
-          >
-            <NoteCard
-              note={note}
-              isEditing={editingFilename === note.filename}
-              isFocused={i === $focusedIndex && editingFilename === null}
-              onClick={() => handleCardClick(note.filename)}
-              onExit={handleEditorExit}
-            />
-          </div>
-        {:else}
-          <p class="feed-empty">No notes yet. Create one!</p>
-        {/each}
-      {/key}
-      {#if hasMore}
-        <button class="load-more-btn" onclick={loadMoreNotes}>
-          Load more
-        </button>
-      {/if}
-    {/if}
+<div class="feed" data-testid="feed" on:scroll={handleScroll}>
+  <div class="grid">
+    {#each displayItems as item, i (item.note.filename)}
+      <NoteCard
+        note={item.note}
+        snippet={item.snippet}
+        focused={$focusedIndex === i}
+        editing={editingFilename === item.note.filename}
+        onEdit={() => (editingFilename = item.note.filename)}
+        onExitEdit={() => (editingFilename = null)}
+        index={i}
+      />
+    {/each}
   </div>
+
+  {#if displayItems.length === 0}
+    <div class="empty-state" data-testid="empty-state">
+      <p>No notes yet. Press <kbd>Cmd+N</kbd> / <kbd>Ctrl+N</kbd> to create one.</p>
+    </div>
+  {/if}
 </div>
 
 <style>
-  .feed-container {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    overflow: hidden;
-  }
-  .feed-list {
+  .feed {
     flex: 1;
     overflow-y: auto;
-    padding: 8px 16px;
+    padding: var(--grid-gap);
   }
-  .feed-empty {
-    text-align: center;
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(var(--grid-min-col), 1fr));
+    gap: var(--grid-gap);
+    align-items: start;
+  }
+
+  .empty-state {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 200px;
     color: var(--text-secondary);
-    padding: 40px 0;
+    font-size: 15px;
   }
-  .load-more-btn {
-    display: block;
-    width: 100%;
-    padding: 10px;
-    margin: 8px 0;
-    text-align: center;
-    border-radius: var(--radius);
-    color: var(--accent);
+
+  .empty-state kbd {
+    padding: 2px 6px;
+    background: var(--surface-hover);
     border: 1px solid var(--border);
-  }
-  .load-more-btn:hover {
-    background: var(--surface-secondary);
+    border-radius: 4px;
+    font-size: 13px;
+    font-family: var(--font-mono);
   }
 </style>

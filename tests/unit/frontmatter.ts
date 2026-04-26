@@ -1,40 +1,34 @@
-// @generated-by: codd implement
-// @generated-from: docs/plan/implementation_plan.md (plan:implementation_plan)
-// @task-id: 13-1
-// @task-title: `serde_yaml` による YAML 解析。`Frontmatter` 構造体（`tags: Vec<String>`, `extra: serde_yaml::Mapping`）でラウンドトリップ保全。frontmatter 不在時は `tags: []` として扱う。
-// @generated-from: docs/design/system_design.md (design:system-design)
-// @generated-from: docs/detailed_design/component_architecture.md (detail:component_architecture)
-// @generated-from: docs/detailed_design/editor_clipboard_design.md (detail:editor_clipboard)
-// @generated-from: docs/detailed_design/grid_search_design.md (detail:grid_search)
-// @generated-from: docs/detailed_design/storage_fileformat_design.md (detail:storage_fileformat)
-// @generated-from: docs/governance/adr_tech_stack.md (governance:adr_tech_stack)
-// @generated-from: docs/requirements/requirements.md (req:promptnotes-requirements)
-// @generated-from: docs/test/acceptance_criteria.md (test:acceptance_criteria)
+/**
+ * Frontmatter stub — standalone parsing/serialization for tests.
+ * This mirrors the production frontmatter module but provides full
+ * parse/serialize capabilities for test assertions.
+ */
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
-// @generated-from: docs/plan/implementation_plan.md
-// @sprint: 13
-// @task: 13-1
-// Frontmatter parse/serialize with round-trip preservation of unknown fields.
-// Mirrors Rust struct: Frontmatter { tags: Vec<String>, extra: serde_yaml::Mapping }
-
-import { parseYaml, stringifyYaml } from './yaml-utils';
+// ─── Types ───────────────────────────────────────────────────
 
 export interface Frontmatter {
   readonly tags: string[];
   readonly extra: Record<string, unknown>;
 }
 
-const FRONTMATTER_OPEN = '---';
-// ADR-008: 閉じフェンス `\n---\n` の直後に separator `\n` が 1 つあれば body に含めない
-const FRONTMATTER_REGEX = /^---\n([\s\S]*?)\n---\n\n?/;
+// ─── Constants ───────────────────────────────────────────────
+
+export const FRONTMATTER_OPEN = '---';
+
+export const FRONTMATTER_REGEX = /^---\n([\s\S]*?)\n---\n\n?/;
+
+// ─── Helpers ─────────────────────────────────────────────────
 
 export function createEmptyFrontmatter(): Frontmatter {
   return { tags: [], extra: {} };
 }
 
+// ─── Core Functions ──────────────────────────────────────────
+
 /**
- * Split raw markdown content into frontmatter YAML string and body.
- * Returns null yaml when frontmatter is absent.
+ * Split raw note content into YAML string and body.
+ * Returns `{ yaml: null, body: content }` if no frontmatter is detected.
  */
 export function splitRaw(content: string): { yaml: string | null; body: string } {
   if (!content.startsWith(FRONTMATTER_OPEN + '\n')) {
@@ -50,9 +44,7 @@ export function splitRaw(content: string): { yaml: string | null; body: string }
 }
 
 /**
- * Parse frontmatter from raw file content.
- * When frontmatter is absent, returns tags: [] with empty extra.
- * Unknown fields are preserved in `extra` for round-trip fidelity.
+ * Parse raw note content into structured Frontmatter + body.
  */
 export function parseFrontmatter(content: string): { frontmatter: Frontmatter; body: string } {
   const { yaml, body } = splitRaw(content);
@@ -81,8 +73,8 @@ export function parseFrontmatter(content: string): { frontmatter: Frontmatter; b
 }
 
 /**
- * Serialize Frontmatter back to a full markdown string (frontmatter + body).
- * Preserves unknown fields stored in `extra`.
+ * Serialize Frontmatter + body back into raw note content.
+ * ADR-008 compliant: closing fence `---\n` + separator `\n` before body.
  */
 export function serializeFrontmatter(frontmatter: Frontmatter, body: string): string {
   const mapping: Record<string, unknown> = {};
@@ -101,6 +93,8 @@ export function serializeFrontmatter(frontmatter: Frontmatter, body: string): st
   // ADR-008: 閉じフェンス後に separator `\n` を 1 つ置いた上で body を続ける
   return `---\n${trimmed}\n---\n\n${body}`;
 }
+
+// ─── Internal ────────────────────────────────────────────────
 
 function normalizeTags(raw: unknown): string[] {
   if (Array.isArray(raw)) {

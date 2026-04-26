@@ -1,7 +1,7 @@
 import { writable, get } from "svelte/store";
-import type { AppConfig, SetConfigResult } from "$lib/shell/tauri-commands";
-import { getConfig as getConfigCmd } from "$lib/shell/tauri-commands";
-import { handleCommandError } from "$lib/shell/error-handler";
+import { getConfig as getConfigCmd } from "../shell/tauri-commands";
+import type { SetConfigResult } from "../shell/tauri-commands";
+import { handleCommandError } from "../shell/error-handler";
 
 export interface ConfigState {
   notes_directory: string;

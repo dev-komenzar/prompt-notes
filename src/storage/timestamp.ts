@@ -1,6 +1,4 @@
-/**
- * Parse a note filename (YYYY-MM-DDTHHMMSS.md) to a Date.
- */
+/** Parse a note filename like `2024-01-15T143022.md` into a Date, or null if invalid. */
 export function filenameToDate(filename: string): Date | null {
   const match = filename.match(
     /^(\d{4})-(\d{2})-(\d{2})T(\d{2})(\d{2})(\d{2})\.md$/
@@ -10,17 +8,13 @@ export function filenameToDate(filename: string): Date | null {
   return new Date(`${y}-${mo}-${d}T${h}:${mi}:${s}`);
 }
 
-/**
- * Format a Date to the filename prefix (without .md).
- */
+/** Convert a Date to the filename timestamp prefix (without `.md`). */
 export function dateToFilenamePrefix(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
 }
 
-/**
- * Format a Date for display in the feed.
- */
+/** Format a date string for display with relative time. */
 export function formatDisplayDate(dateStr: string): string {
   const date = new Date(dateStr);
   const now = new Date();

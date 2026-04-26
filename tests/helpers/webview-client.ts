@@ -142,7 +142,9 @@ export async function setNotesDirectoryAndReload(dir: string): Promise<void> {
         cmd: string,
         args?: Record<string, unknown>,
       ) => Promise<unknown>;
-      invoke('set_config', { newConfig: { notes_directory: notesDir } })
+      invoke('set_config', {
+        params: { notes_dir: notesDir, move_existing: false },
+      })
         .then(() => done(null))
         .catch((err: unknown) =>
           done(err instanceof Error ? err.message : String(err)),
