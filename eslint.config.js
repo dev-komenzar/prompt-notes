@@ -5,31 +5,49 @@ import svelteParser from "svelte-eslint-parser";
 import tsParser from "@typescript-eslint/parser";
 import globals from "globals";
 
-const restrictedImportsRule = ["error", {
-  paths: [
-    {
-      name: "@tauri-apps/plugin-fs",
-      message: "Direct filesystem access from frontend is prohibited. Use tauri-commands.ts IPC wrappers.",
-    },
-    {
-      name: "@tauri-apps/plugin-clipboard-manager",
-      message: "Direct clipboard access is prohibited. Use tauri-commands.ts copyToClipboard().",
-    },
-    {
-      name: "@tauri-apps/plugin-dialog",
-      message: "Direct dialog access is prohibited. Use tauri-commands.ts pickNotesDirectory().",
-    },
-    {
-      name: "@tauri-apps/plugin-global-shortcut",
-      message: "Direct global-shortcut registration from frontend is prohibited. Use 'new-note' event from Rust-side registration.",
-    },
-  ],
-}];
+/**
+ * IPC boundary enforcement — ADR-007
+ * フロント側は src/shell/tauri-commands.ts 経由でのみ Tauri API を利用する。
+ * @tauri-apps/plugin-* の直接 import を禁止。
+ */
+const restrictedImportsRule = [
+  "error",
+  {
+    patterns: [
+      {
+        group: ["@tauri-apps/plugin-*"],
+        message:
+          "Use src/shell/tauri-commands.ts wrappers instead of importing Tauri plugins directly.",
+      },
+    ],
+    paths: [
+      {
+        name: "@tauri-apps/plugin-clipboard-manager",
+        message: "Use tauri-commands.ts copyToClipboard() instead.",
+      },
+      {
+        name: "@tauri-apps/plugin-dialog",
+        message: "Use tauri-commands.ts pickNotesDirectory() instead.",
+      },
+      {
+        name: "@tauri-apps/plugin-global-shortcut",
+        message:
+          "Use the 'new-note' event from Rust-side registration instead.",
+      },
+    ],
+  },
+];
 
-const restrictedGlobalsRule = ["error",
+const restrictedGlobalsRule = [
+  "error",
   {
     name: "navigator",
-    message: "Do not access navigator.clipboard or other navigator APIs. Use tauri-commands.ts IPC wrappers.",
+    message:
+      "Do not access navigator.clipboard or other navigator APIs. Use src/shell/tauri-commands.ts wrappers.",
+  },
+  {
+    name: "__TAURI__",
+    message: "Use src/shell/tauri-commands.ts instead of __TAURI__.",
   },
 ];
 
