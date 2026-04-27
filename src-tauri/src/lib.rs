@@ -9,6 +9,7 @@ use tauri::Manager;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             let app_handle = app.handle().clone();
             // Ensure notes directory exists on startup
@@ -19,18 +20,6 @@ pub fn run() {
                 app.manage(commands::StartupError(Some(msg)));
             } else {
                 app.manage(commands::StartupError(None));
-            }
-
-            // Initialize a single long-lived clipboard handle. On Linux this
-            // keeps the X11 selection-server thread alive across IPC calls so
-            // that a `set_text` followed by an out-of-process paste works.
-            match arboard::Clipboard::new() {
-                Ok(cb) => {
-                    app.manage(commands::ClipboardManager(std::sync::Mutex::new(cb)));
-                }
-                Err(e) => {
-                    eprintln!("Failed to initialize clipboard: {}", e);
-                }
             }
             Ok(())
         })
