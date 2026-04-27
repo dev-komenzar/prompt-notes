@@ -35,15 +35,17 @@ describe('AC-EDIT-01 — Ctrl/Cmd+N creates a new note (button-isolated)', () =>
     await waitForAppReady();
     await browser.pause(500);
 
+    const notesDir = path.join(tempDir, 'notes');
+
     // Precondition: directory is empty after the per-test redirect.
-    expect(listNotesOnDisk(tempDir)).toHaveLength(0);
+    expect(listNotesOnDisk(notesDir)).toHaveLength(0);
 
     // Send the chord without first clicking the "+ New Note" button so that
     // the only possible note source is the keyboard shortcut handler.
     await browser.keys(getNewNoteShortcut().split('+'));
     await browser.pause(2_000);
 
-    const notes = listNotesOnDisk(tempDir);
+    const notes = listNotesOnDisk(notesDir);
     expect(notes.length).toBe(1);
   });
 });
