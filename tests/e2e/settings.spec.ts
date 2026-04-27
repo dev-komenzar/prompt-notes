@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { waitForAppReady, navigateToView } from '../helpers/webview-client';
+import { waitForAppReady, openSettings } from '../helpers/webview-client';
 import { createTempNotesDir, cleanupTempDir, writeTestConfig } from '../helpers/test-fixtures';
 
 describe('module:settings — E2E Tests', () => {
@@ -15,10 +15,10 @@ describe('module:settings — E2E Tests', () => {
     cleanupTempDir(tempDir);
   });
 
-  // AC-SE-01: Settings screen shows directory path
-  it('AC-SE-01: settings screen displays notes directory', async () => {
+  // AC-UI-01: Settings modal shows directory path
+  it('AC-UI-01: settings modal displays notes directory', async () => {
     await waitForAppReady();
-    await navigateToView('settings');
+    await openSettings();
     await browser.pause(500);
 
     const dirDisplay = await browser.$('[data-testid="notes-dir-display"], [data-testid="notes-dir-input"], input[aria-label*="directory" i], input[aria-label*="ディレクトリ"]');

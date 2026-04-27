@@ -2,7 +2,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 import {
   waitForAppReady,
-  navigateToView,
   typeInEditor,
   setNotesDirectoryAndReload,
 } from '../helpers/webview-client';
@@ -32,7 +31,6 @@ describe('module:storage — E2E Tests', () => {
   // AC-ST-01: Filename matches YYYY-MM-DDTHHMMSS.md
   it('AC-ST-01: new note filename matches YYYY-MM-DDTHHMMSS.md', async () => {
     await waitForAppReady();
-    await navigateToView('editor');
 
     await browser.keys(getNewNoteShortcut().split('+'));
     await browser.pause(2_000);
@@ -47,7 +45,6 @@ describe('module:storage — E2E Tests', () => {
   // AC-ST-02: File is .md with YAML frontmatter
   it('AC-ST-02: saved file is .md with YAML frontmatter and body', async () => {
     await waitForAppReady();
-    await navigateToView('editor');
 
     await browser.keys(getNewNoteShortcut().split('+'));
     await browser.pause(1_000);
@@ -79,7 +76,6 @@ describe('module:storage — E2E Tests', () => {
   // Filename immutability
   it('CONV-FILENAME: filename is immutable after creation', async () => {
     await waitForAppReady();
-    await navigateToView('editor');
 
     await browser.keys(getNewNoteShortcut().split('+'));
     await browser.pause(2_000);
@@ -99,7 +95,6 @@ describe('module:storage — E2E Tests', () => {
   // Data locality
   it('CONV-STORAGE: data is local .md files only, no DB', async () => {
     await waitForAppReady();
-    await navigateToView('editor');
 
     await browser.keys(getNewNoteShortcut().split('+'));
     await browser.pause(1_000);
