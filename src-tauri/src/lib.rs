@@ -20,6 +20,18 @@ pub fn run() {
             } else {
                 app.manage(commands::StartupError(None));
             }
+
+            // Initialize a single long-lived clipboard handle. On Linux this
+            // keeps the X11 selection-server thread alive across IPC calls so
+            // that a `set_text` followed by an out-of-process paste works.
+            match arboard::Clipboard::new() {
+                Ok(cb) => {
+                    app.manage(commands::ClipboardManager(std::sync::Mutex::new(cb)));
+                }
+                Err(e) => {
+                    eprintln!("Failed to initialize clipboard: {}", e);
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -34,6 +46,7 @@ pub fn run() {
             commands::trash_note,
             commands::force_delete_note,
             commands::copy_to_clipboard,
+            commands::read_from_clipboard,
             commands::list_all_tags,
             commands::get_startup_error,
         ])

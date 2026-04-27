@@ -1,3 +1,5 @@
+use std::sync::Mutex;
+
 use tauri::State;
 
 use crate::config;
@@ -5,6 +7,16 @@ use crate::error::CommandError;
 use crate::notes;
 
 pub struct StartupError(pub Option<String>);
+
+// Holds a single `arboard::Clipboard` instance for the lifetime of the app.
+//
+// On Linux, `arboard::Clipboard::new()` spawns a background X11 worker thread that
+// services SelectionRequest events. When the last `Clipboard` is dropped that
+// thread shuts down and the X11 selection ownership is released — so any read
+// after the function-scoped instance has been dropped sees an empty clipboard.
+// Keeping a single instance in Tauri state preserves ownership for the entire
+// session (matching macOS/Windows where the OS owns the clipboard buffer itself).
+pub struct ClipboardManager(pub Mutex<arboard::Clipboard>);
 
 #[tauri::command]
 pub async fn create_note(
@@ -127,11 +139,27 @@ pub async fn force_delete_note(
 }
 
 #[tauri::command]
-pub async fn copy_to_clipboard(text: String) -> Result<(), CommandError> {
-    use arboard::Clipboard;
-    let mut clipboard = Clipboard::new().map_err(|e| CommandError::clipboard_failed(e))?;
-    clipboard
-        .set_text(text)
+pub async fn copy_to_clipboard(
+    clipboard: State<'_, ClipboardManager>,
+    text: String,
+) -> Result<(), CommandError> {
+    let mut cb = clipboard
+        .0
+        .lock()
+        .map_err(|e| CommandError::clipboard_failed(e))?;
+    cb.set_text(text)
+        .map_err(|e| CommandError::clipboard_failed(e))
+}
+
+#[tauri::command]
+pub async fn read_from_clipboard(
+    clipboard: State<'_, ClipboardManager>,
+) -> Result<String, CommandError> {
+    let mut cb = clipboard
+        .0
+        .lock()
+        .map_err(|e| CommandError::clipboard_failed(e))?;
+    cb.get_text()
         .map_err(|e| CommandError::clipboard_failed(e))
 }
 
