@@ -1,5 +1,6 @@
-# This file is generated — see src/generated/sprint_53/nixos/flake-generator.ts
-# Run: node -e "require('./src/generated/sprint_53/nixos/flake-generator.js').writeFlakeNix()" to refresh.
+# Hand-maintained Nix flake for PromptNotes dev shell + reproducible build.
+# (旧コメントにあった src/generated/sprint_53/nixos/flake-generator.ts は失われており、
+# このファイルが現在の真実。CoDD で設計書を更新する場合は併せて手で追従する。)
 {
   description = "A local note-taking app for AI prompts";
 
@@ -29,10 +30,19 @@
           webkitgtk_4_1
           gtk3
           glib-networking
+          gsettings-desktop-schemas
           gdk-pixbuf
           librsvg
           libayatana-appindicator
           xdotool
+        ];
+
+        # GSettings schema dirs required by GTK FileChooser at runtime
+        # (cargo tauri dev は wrapGAppsHook を通らないので XDG_DATA_DIRS だけでは
+        # 子プロセスへ伝搬しないことがあるため GSETTINGS_SCHEMA_DIR で直接指定する)
+        gsettingsSchemaDir = pkgs.lib.concatStringsSep ":" [
+          "${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}/glib-2.0/schemas"
+          "${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}/glib-2.0/schemas"
         ];
 
         # Build the frontend assets (Svelte/Vite) before the Rust build
@@ -90,6 +100,7 @@
           PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig:${pkgs.glib.dev}/lib/pkgconfig:${pkgs.webkitgtk_4_1.dev}/lib/pkgconfig";
           WEBKIT_DISABLE_COMPOSITING_MODE = "1";
           GIO_MODULE_DIR = "${pkgs.glib-networking}/lib/gio/modules";
+          GSETTINGS_SCHEMA_DIR = gsettingsSchemaDir;
 
           buildAndTestSubdir = "src-tauri";
 
@@ -132,6 +143,7 @@
           PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig:${pkgs.glib.dev}/lib/pkgconfig:${pkgs.webkitgtk_4_1.dev}/lib/pkgconfig";
           WEBKIT_DISABLE_COMPOSITING_MODE = "1";
           GIO_MODULE_DIR = "${pkgs.glib-networking}/lib/gio/modules";
+          GSETTINGS_SCHEMA_DIR = gsettingsSchemaDir;
 
           shellHook = ''
             echo "PromptNotes dev shell — run: cargo tauri dev"
