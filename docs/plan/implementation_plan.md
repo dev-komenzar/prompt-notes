@@ -383,13 +383,13 @@ Windows は対象外であり、ビルドターゲット・CI パイプライン
 
 | # | 成果物 | ファイル | 詳細 |
 |---|---|---|---|
-| 1 | `NoteCard.svelte` | `src/editor/NoteCard.svelte` | 2 状態ステートマシン（ViewMode / EditMode）。ViewMode: 本文全文表示（`NoteMetadata.body_preview` を直接利用、frontmatter 独自再パースなし）、タグ表示、タイムスタンプ表示。EditMode: NoteEditor のマウント。**CopyButton と DeleteButton は `.note-card-header .note-actions` に配置し、モード共通領域として常時マウント**（INV-CONTAIN-05）。確定保存トリガー: カード外クリック・別カード選択・Cmd+N・Escape 時に `saveNote()` → ViewMode 遷移。**レイアウト制約**: ルート要素に `flex-shrink: 0`、本文への `max-height` 制限なし（全文表示が要件）。モード切替時の高さアニメーション: 200ms / ease-in-out（AC-UI-11）。`prefers-reduced-motion` で即時切替フォールバック（AC-UI-12） |
+| 1 | `NoteCard.svelte` | `src/editor/NoteCard.svelte` | 2 状態ステートマシン（ViewMode / EditMode）。ViewMode: 本文を `NoteMetadata.body_preview` から直接表示（frontmatter 独自再パースなし）、タグ表示、タイムスタンプ表示。EditMode: NoteEditor のマウント。**CopyButton と DeleteButton は `.note-card-header .note-actions` に配置し、モード共通領域として常時マウント**（INV-CONTAIN-05）。確定保存トリガー: カード外クリック・別カード選択・Cmd+N・Escape 時に `saveNote()` → ViewMode 遷移。**レイアウト制約**: ルート要素に `flex-shrink: 0`。**モード別カード高さ挙動**（AC-UI-04, FC-UI-01）: ViewMode は本文プレビュー領域に `max-height: 300px` + `overflow: hidden` を適用し冒頭プレビューを表示（カード内スクロール禁止）、EditMode は `max-height` を解除し本文量に応じて伸ばす（`overflow: visible`、内部スクロールなし）。`max-height` の値はアプリ内定数として 1 箇所（CSS カスタムプロパティ等）で定義し、設定モーダル / `config.json` への永続化は本リリースのスコープ外。データ層では本文全量を保持し、`body_preview` のみで持つ・恒久切り詰め（`text-overflow: ellipsis` / `-webkit-line-clamp` 等）は禁止（FBD-03）。モード切替時の高さアニメーション: カード外形高さ（ViewMode = `min(本文+padding, max-height)`、EditMode = `本文+padding`）を 200ms / ease-in-out で補間（AC-UI-11）。`prefers-reduced-motion` で即時切替フォールバック（AC-UI-12） |
 
 **検証基準:**
 
 | テスト種別 | 対象 | 基準 |
 |---|---|---|
-| コンポーネントテスト | `NoteCard.svelte` | ViewMode → EditMode → ViewMode の遷移。CopyButton / DeleteButton が両モードでマウント済み。`flex-shrink: 0` が適用 |
+| コンポーネントテスト | `NoteCard.svelte` | ViewMode → EditMode → ViewMode の遷移。CopyButton / DeleteButton が両モードでマウント済み。`flex-shrink: 0` が適用。ViewMode で本文プレビューに `max-height: 300px` + `overflow: hidden` が適用され、EditMode で解除されること。両モードとも `.note-card` 自身に `overflow-y: auto` / `overflow-y: scroll` が付与されないこと（FC-UI-01） |
 
 ---
 

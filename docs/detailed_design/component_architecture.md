@@ -550,7 +550,7 @@ sequenceDiagram
 |---|---|---|
 | FBD-01 | `App.svelte` に `currentView: "feed" \| "editor" \| "settings"` 型の画面切替ステートを置き、編集時に Feed 全体をアンマウントしてフルスクリーン NoteEditor を表示する | INV-CONTAIN-01, 02, 03 |
 | FBD-02 | `src/routes/edit/[filename]` のような URL ルート単位で編集画面を分ける（SvelteKit 相当のルーティングで NoteEditor を別ページ化する） | INV-CONTAIN-01, 02, 03 |
-| FBD-03 | NoteCard が `body_preview` や省略テキストのみを表示し、本文全文を**いずれかの手段で**取得・表示できる状態にしない（`white-space: nowrap` / `text-overflow: ellipsis` / `-webkit-line-clamp` 等による恒久的切り詰めや、本文を `body_preview` フィールドのみで保持する設計）。表示モードは `max-height` + カード内スクロールで本文を表示し、編集モードは本文量に応じてカード高を伸ばすこと（requirements §ノート、AC-UI-04）。なお `max-height` を超えるカード内スクロールは表示モードでのみ許容され、本文の永続的な切り詰めは禁止 | requirements §ノート |
+| FBD-03 | NoteCard が **データ層**で本文全量を保持しない設計（`body_preview` フィールドのみで本文を持ち、編集モード遷移時にも本文全量にアクセスできない設計、または `white-space: nowrap` / `text-overflow: ellipsis` / `-webkit-line-clamp` 等の**恒久的なテキスト切り詰め**を行う実装）。**表示モードでは `max-height` + `overflow: hidden` による冒頭プレビュー表示は許容**するが、これは視覚的なクリップであり本文データ自体を切り詰めるものではないこと。編集モードは本文量に応じてカード高を伸ばし、本文全量がスクロールなしで閲覧可能であること（requirements §ノート、AC-UI-04）。**カード内スクロール（`overflow-y: auto` / `overflow-y: scroll`）は表示モード・編集モードいずれでも禁止**（フィードのスクロールと二重化するため） | requirements §ノート |
 | FBD-04 | 編集モード遷移時に NoteCard 構造（CopyButton・DeleteButton・タグ行）をアンマウントまたは再マウントする | INV-CONTAIN-05, AC-EDIT-06b |
 | FBD-05 | `NoteEditor.svelte` に `onBack: () => void` のようなコールバックを持たせて、Feed への「戻る」ナビゲーションを前提とした API にする。`onBack` の存在はインラインエディタであれば不要であり、フルスクリーンエディタ前提の設計の化石である | INV-CONTAIN-02 |
 | FBD-06 | Masonry / Pinterest 風カード / CSS columns / 多次元レイアウト（`auto-fill` / `repeat()` / 多列）等で 2 列以上の多列レイアウトを構成する。フィードは必ず単一列・縦積みとし、`display: flex; flex-direction: column` で実装すること。requirements §フィード表示「新しいノートが上に来る降順表示」「縦に並ぶフィード形式」を厳守する | requirements §トップフィード画面 |
@@ -722,7 +722,6 @@ Rust 側 `storage/frontmatter.rs` と TypeScript 側 `src/editor/frontmatter.ts`
 | 時間・イージング | 200ms / ease-in-out |
 | コンテンツ切替 | 高さアニメーション開始と同時に即時切替 |
 | 高さ差 0 のケース | 本文が `max-height` 未満で表示↔編集の外形高さが等しい場合、視覚的な高さ変化は生じない（`transition` は設定されていてよいが、`height` の補間結果は不変）。コンテンツ切替は他ケースと同様に即時行う |
-| スクロール位置 | 表示モードでカード内スクロール位置を持っていても、編集モード遷移時は引き継がず、エディタはノート先頭から表示する。表示モードに戻ったときも `scrollTop = 0` にリセットする |
 | 中断時の挙動 | 実行中のアニメーションを即座に最終状態にスナップし次の操作を受け付ける |
 
 **実装方針:**
@@ -730,7 +729,8 @@ Rust 側 `storage/frontmatter.rs` と TypeScript 側 `src/editor/frontmatter.ts`
 - モード切替前にカード要素の現在の外形高さを計測し、切替後の外形高さを確定してから CSS `transition: height` または Web Animations API で補間する
 - 表示モードの確定高さは `min(scrollHeight + padding, max-height)`、編集モードの確定高さは `scrollHeight + padding`（CodeMirror マウント後の値）として計算する
 - CSS `transition: height` は `height: auto` に対して動作しないため、切替前後の高さを JavaScript で計測して明示的な px 値でアニメーションを駆動する
-- アニメーション完了後は `height` を `auto` に戻し、コンテンツ変化による自然な高さ変化を妨げない（表示モード復帰時は併せて `max-height` 制約を再適用する）
+- アニメーション完了後は `height` を `auto` に戻し、コンテンツ変化による自然な高さ変化を妨げない（表示モード復帰時は併せて `max-height` 制約と `overflow: hidden` を再適用する）
+- カード自身に `overflow-y: auto` を付与してはならない（`overflow: hidden` のみ許容）。フィードのスクロールと二重化する
 
 **prefers-reduced-motion:** `@media (prefers-reduced-motion: reduce)` が有効な環境ではアニメーションを無効化し即時切替にフォールバックする（AC-UI-12）。
 
