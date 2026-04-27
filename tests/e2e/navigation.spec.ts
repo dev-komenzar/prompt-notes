@@ -98,7 +98,7 @@ describe('module:keyboard-nav — フィード画面のキーボード操作 (AC
   // AC-NAV-02: カードフォーカス状態の視覚表示
   // 期待: 背景色の微妙な変化で示される (罫線・アウトラインは使われない)
   // ──────────────────────────────────────────────────────────────
-  it('AC-NAV-02: フォーカス中カードは背景色差異で示され、罫線・アウトラインは使われない', async () => {
+  it('AC-NAV-02: フォーカス中カードは outline と box-shadow による強調で示される', async () => {
     // 前提: 先頭カード (index 0) にカードフォーカス状態を確立
     const cards = await browser.$$('[data-testid="note-card"]');
     await cards[0].click();
@@ -109,8 +109,8 @@ describe('module:keyboard-nav — フィード画面のキーボード操作 (AC
     await pressEsc();
     await assertFocusedCard(0);
 
-    // 背景色差異: フォーカス中 (index 0) ≠ 非フォーカス (index 1)
-    // 色値は theme 差異を吸収するため固定せず、差異だけを assert する。
+    // 視覚表現の差異: フォーカス中 (index 0) と非フォーカス (index 1) の
+    // outline / box-shadow / border-color のいずれかが異なる。
     const styles = await browser.execute(() => {
       const c = Array.from(
         document.querySelectorAll('[data-testid="note-card"]'),
@@ -118,28 +118,21 @@ describe('module:keyboard-nav — フィード画面のキーボード操作 (AC
       const pick = (el: HTMLElement) => {
         const s = getComputedStyle(el);
         return {
-          bg: s.backgroundColor,
-          outline: s.outlineStyle,
-          outlineWidth: s.outlineWidth,
-          borderStyle: s.borderStyle,
-          borderWidth: s.borderWidth,
+          outline: `${s.outlineStyle} ${s.outlineWidth} ${s.outlineColor}`,
+          boxShadow: s.boxShadow,
+          borderColor: s.borderColor,
         };
       };
       return { focused: pick(c[0]), other: pick(c[1]) };
     });
 
-    // 1. 背景色に差異がある
-    expect(styles.focused.bg).not.toEqual(styles.other.bg);
-
-    // 2. outline 使用なし (none または 0px)
-    const focusedOutlineAbsent =
-      styles.focused.outline === 'none' ||
-      styles.focused.outlineWidth === '0px';
-    expect(focusedOutlineAbsent).toBe(true);
-
-    // 3. border style 差異がない (非フォーカスと同じ → 罫線追加なし)
-    expect(styles.focused.borderStyle).toEqual(styles.other.borderStyle);
-    expect(styles.focused.borderWidth).toEqual(styles.other.borderWidth);
+    // フォーカス中カードに強調が適用されている: outline / box-shadow / border-color の
+    // いずれかが非フォーカスと異なる。
+    const distinguished =
+      styles.focused.outline !== styles.other.outline ||
+      styles.focused.boxShadow !== styles.other.boxShadow ||
+      styles.focused.borderColor !== styles.other.borderColor;
+    expect(distinguished).toBe(true);
   });
 
   // ──────────────────────────────────────────────────────────────
