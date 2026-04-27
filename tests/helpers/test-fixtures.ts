@@ -42,7 +42,15 @@ export function seedNote(
 ): string {
   const filename = generateNoteFilename(date);
   const content = buildNoteContent(tags, body);
-  fs.writeFileSync(path.join(dir, filename), content, "utf-8");
+  const filePath = path.join(dir, filename);
+  fs.writeFileSync(filePath, content, "utf-8");
+  // Align mtime/atime with the filename date so `list_notes` (which sorts by
+  // updated_at desc) returns notes in the order expected by tests. Without
+  // this, all seeded notes share the wall-clock mtime of the seed loop and
+  // their display order is the inverse of the seed loop order.
+  if (date) {
+    fs.utimesSync(filePath, date, date);
+  }
   return filename;
 }
 
@@ -71,8 +79,19 @@ export function seedRecentNotes(
   return filenames;
 }
 
+// Seeds 4 navigation-fixture notes whose bodies are labelled A..D.
+// The newest (index 0) is "Navigation fixture note A". The card count
+// matches AC-NAV-07a's expectation that the bottom card is index 3 = D
+// and that 4 → 3 → 2 → 1 → 0 is the deletion progression in AC-NAV-07c.
 export function seedNavigationFixture(dir: string): string[] {
-  return seedRecentNotes(dir, 5);
+  const labels = ["A", "B", "C", "D"];
+  const filenames: string[] = [];
+  for (let i = 0; i < labels.length; i++) {
+    const d = new Date();
+    d.setSeconds(d.getSeconds() - i);
+    filenames.push(seedNote(dir, [], `Navigation fixture note ${labels[i]}`, d));
+  }
+  return filenames;
 }
 
 export function readNoteFromDisk(dir: string, filename: string): string {
