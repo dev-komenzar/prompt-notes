@@ -187,21 +187,40 @@ export async function assertFocusUnchanged(prevIndex: number): Promise<void> {
 // ---------- Side-checks ----------
 
 /**
- * Read the caret offset of the active CodeMirror 6 editor (`head` of the main
- * selection). Returns -1 if no editor is mounted. Used by AC-NAV-09a/b to
- * assert that ↑/↓ moved the caret inside the editor instead of the card focus.
+ * Read a position-encoded caret signature from the active CodeMirror 6 editor.
+ * Returns `lineIndex * 100000 + offsetWithinLine`, or -1 if no caret can be
+ * located. Used by AC-NAV-09a/b to assert that ↑/↓ moved the caret inside the
+ * editor (the absolute value isn't meaningful — only the change is asserted).
+ *
+ * The implementation uses standard DOM APIs (`window.getSelection`, `Range`)
+ * so no test-only handle has to be exposed by the production code (see
+ * memory: `feedback_no_test_handles_in_prod`).
  */
 export async function getCodeMirrorCursor(): Promise<number> {
   return browser.execute(() => {
-    const el = document.querySelector('.cm-editor') as
-      | (HTMLElement & { cmView?: { view?: { state?: { selection?: { main?: { head?: number } } } } } })
-      | null;
-    if (!el) return -1;
-    // @ts-ignore - runtime-only CodeMirror attach.
-    const view = (el as any).cmView?.view ?? (window as any).__cmView;
-    if (!view || !view.state) return -1;
-    const head = view.state.selection?.main?.head;
-    return typeof head === 'number' ? head : -1;
+    const cm = document.querySelector('.cm-content') as HTMLElement | null;
+    if (!cm) return -1;
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return -1;
+    const range = sel.getRangeAt(0);
+    if (!cm.contains(range.endContainer)) return -1;
+
+    const endNode =
+      range.endContainer.nodeType === Node.ELEMENT_NODE
+        ? (range.endContainer as Element)
+        : range.endContainer.parentElement;
+    const endLine = endNode?.closest('.cm-line') as HTMLElement | null;
+    if (!endLine) return -1;
+    const lines = Array.from(cm.querySelectorAll('.cm-line'));
+    const lineIdx = lines.indexOf(endLine);
+    if (lineIdx === -1) return -1;
+
+    const r = document.createRange();
+    r.setStart(endLine, 0);
+    r.setEnd(range.endContainer, range.endOffset);
+    const offsetInLine = r.toString().length;
+
+    return lineIdx * 100000 + offsetInLine;
   }) as Promise<number>;
 }
 
@@ -236,9 +255,15 @@ export async function readClipboard(): Promise<string> {
     }
     invoke('read_from_clipboard')
       .then((v) => done(typeof v === 'string' ? v : String(v)))
-      .catch((err: unknown) =>
-        done('__READ_FAILED__:' + (err instanceof Error ? err.message : String(err))),
-      );
+      .catch((err: unknown) => {
+        const msg =
+          err instanceof Error
+            ? err.message
+            : typeof err === 'object' && err !== null
+              ? JSON.stringify(err)
+              : String(err);
+        done('__READ_FAILED__:' + msg);
+      });
   });
   return result;
 }

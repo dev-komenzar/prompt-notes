@@ -269,13 +269,17 @@ describe('module:keyboard-nav — フィード画面のキーボード操作 (AC
     expect(copied).not.toContain('---'); // frontmatter delimiter excluded
     expect(copied).not.toContain('tags:'); // frontmatter field excluded
 
-    // 2. Copy ボタンと同一フィードバック (`Copied!` テキスト)
+    // 2. Copy ボタンと同一フィードバック (AC-NAV-06: チェックマーク化・色変化)
+    //    実装は `📋` → `✓` への置換 + `.copied` クラス付与で表現する。
     const copyButton = await browser.$(
       '[data-testid="note-card"][data-focused="true"] [data-testid="copy-button"]',
     );
     await browser.waitUntil(
-      async () => (await copyButton.getText()).includes('Copied'),
-      { timeout: 2_000, timeoutMsg: 'CopyButton did not show Copied! feedback' },
+      async () => {
+        const cls = await copyButton.getAttribute('class');
+        return typeof cls === 'string' && cls.split(/\s+/).includes('copied');
+      },
+      { timeout: 2_000, timeoutMsg: 'CopyButton did not show copied feedback (.copied class)' },
     );
   });
 
